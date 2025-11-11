@@ -76,6 +76,15 @@ const CUBE_EDGES: Array<[number, number]> = [
   [3, 7],
 ];
 
+const CUBE_FACES: Array<[number, number, number, number]> = [
+  [0, 1, 2, 3], // back
+  [4, 5, 6, 7], // front
+  [0, 1, 5, 4], // bottom
+  [2, 3, 7, 6], // top
+  [1, 2, 6, 5], // right
+  [3, 0, 4, 7], // left
+];
+
 const state = {
   ctx: null as CanvasRenderingContext2D | null,
   width: 0,
@@ -300,6 +309,7 @@ const drawCubeAndOrb = () => {
   const perspective = Math.max(state.width, state.height) * 1.2;
   const centerX = state.width / 2;
   const centerY = state.height / 2 + Math.sin(state.cube.floatPhase) * size * 0.15;
+  const progressRatio = Math.min(1, loadProgress.value / 100);
   const transformed = CUBE_VERTICES.map((vertex) => {
     const scaled = {
       x: vertex.x * size,
@@ -311,15 +321,50 @@ const drawCubeAndOrb = () => {
     return {
       x: centerX + rotated.x * depthScale,
       y: centerY + rotated.y * depthScale,
-      depth: depthScale,
+      depth: rotated.z,
+      rotated,
     };
   });
 
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
 
+  if (progressRatio > 0) {
+    const faces = CUBE_FACES.map((indices) => {
+      const points = indices.map((index) => transformed[index]).filter(Boolean) as Array<
+        (typeof transformed)[number]
+      >;
+      if (!points.length) {
+        return null;
+      }
+      const avgDepth = points.reduce((sum, point) => sum + point.depth, 0) / points.length;
+      return { points, avgDepth };
+    })
+      .filter((face): face is { points: Array<(typeof transformed)[number]>; avgDepth: number } => !!face)
+      .sort((a, b) => a.avgDepth - b.avgDepth);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    faces.forEach((face) => {
+      ctx.beginPath();
+      face.points.forEach((point, index) => {
+        if (index === 0) {
+          ctx.moveTo(point.x, point.y);
+        } else {
+          ctx.lineTo(point.x, point.y);
+        }
+      });
+      ctx.closePath();
+      const depthShade = 0.55 + ((face.avgDepth + size) / (size * 2)) * 0.45;
+      const faceAlpha = Math.min(0.95, (0.08 + progressRatio * 0.9) * depthShade);
+      ctx.fillStyle = `rgba(255, 255, 255, ${faceAlpha})`;
+      ctx.fill();
+    });
+    ctx.restore();
+  }
+
   ctx.lineWidth = 4;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+  ctx.strokeStyle = `rgba(160, 205, 255, ${0.18 + progressRatio * 0.3})`;
   CUBE_EDGES.forEach(([startIdx, endIdx]) => {
     const start = transformed[startIdx];
     const end = transformed[endIdx];
@@ -333,7 +378,7 @@ const drawCubeAndOrb = () => {
   });
 
   ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.strokeStyle = `rgba(255, 255, 255, ${0.45 + progressRatio * 0.45})`;
   CUBE_EDGES.forEach(([startIdx, endIdx]) => {
     const start = transformed[startIdx];
     const end = transformed[endIdx];
@@ -346,7 +391,6 @@ const drawCubeAndOrb = () => {
     ctx.stroke();
   });
   ctx.restore();
-
 };
 
 const drawPointerCue = () => {
