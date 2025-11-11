@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 
 type PathPoint = {
   x: number;
@@ -101,6 +101,14 @@ const state = {
   trail: [] as TrailPoint[],
   rafId: 0,
 };
+
+const loadProgress = ref(0);
+const progressPath = ref('');
+const progressPathLength = ref(1);
+const progressPathRef = ref<SVGPathElement | null>(null);
+const progressThickness = ref(18);
+
+const progressDisplay = computed(() => `${Math.round(loadProgress.value)}%`);
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -417,6 +425,25 @@ const pushTrailPoint = (x: number, y: number) => {
   }
 };
 
+const updateProgressFrame = () => {
+  if (!state.width || !state.height) {
+    return;
+  }
+  const thickness = Math.min(32, Math.max(8, Math.min(state.width, state.height) * 0.07));
+  progressThickness.value = thickness;
+  const left = thickness / 2;
+  const right = state.width - thickness / 2;
+  const top = thickness / 2;
+  const bottom = state.height - thickness / 2;
+  const d = [`M ${left} ${bottom}`, `H ${right}`, `V ${top}`, `H ${left}`, `Z`].join(' ');
+  progressPath.value = d;
+  nextTick(() => {
+    if (progressPathRef.value) {
+      progressPathLength.value = progressPathRef.value.getTotalLength();
+    }
+  });
+};
+
 const updateParticles = () => {
   if (!state.path.length) {
     return;
@@ -517,6 +544,9 @@ const animate = () => {
   updateCubeState();
   updateParticles();
   updateTrail();
+  if (loadProgress.value <= 100) {
+    loadProgress.value += 0.05;
+  }
   drawParticles();
   state.rafId = requestAnimationFrame(animate);
 };
@@ -561,6 +591,7 @@ const handleResize = () => {
   })();
   initParticles();
   initStars();
+  updateProgressFrame();
 };
 
 const handlePointerMove = (event: MouseEvent) => {
@@ -593,6 +624,35 @@ onUnmounted(() => {
 <template>
   <div class="app-shell">
     <canvas ref="canvasRef" class="infinity-canvas"></canvas>
+    <svg class="progress-frame" aria-hidden="true">
+      <path
+        class="progress-track"
+        :d="progressPath"
+        :style="{
+          strokeWidth: `${progressThickness}px`,
+        }"
+      />
+      <path
+        class="progress-fill"
+        :d="progressPath"
+        ref="progressPathRef"
+        :style="{
+          strokeDasharray: progressPathLength || 1,
+          strokeDashoffset: (progressPathLength || 1) * (1 - loadProgress / 100),
+          strokeWidth: `${progressThickness}px`,
+        }"
+      />
+    </svg>
+    <div
+      class="progress-square"
+      :style="{
+        width: `${progressThickness}px`,
+        height: `${progressThickness}px`,
+      }"
+    ></div>
+    <div class="progress-label">
+      <span>{{ progressDisplay }}</span>
+    </div>
   </div>
 </template>
 
@@ -617,6 +677,55 @@ onUnmounted(() => {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.progress-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+ .progress-frame path {
+   fill: none;
+   stroke-linecap: butt;
+   stroke-linejoin: miter;
+ }
+ 
+ .progress-track {
+   stroke: rgba(255, 255, 255, 0.08);
+ }
+ 
+.progress-fill {
+  stroke: #ffffff;
+  transition: stroke-dashoffset 0.12s linear;
+}
+
+.progress-square {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  background: #fff;
+  pointer-events: none;
+}
+
+.progress-label {
+  position: fixed;
+  left: 0px;
+  bottom: 0px;
+  font-size: 10rem;
+  font-family: 'Space Grotesk', 'Inter', 'Segoe UI', sans-serif;
+  font-weight: 300;
+  line-height: 0.5;
+  color: #fff;
+  mix-blend-mode: difference;
+  pointer-events: none;
+}
+
+.progress-label span {
+  display: inline-block;
+  padding-bottom: 0.1em;
 }
 
 </style>
