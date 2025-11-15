@@ -49,9 +49,9 @@ type CubeState = {
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
-const PARTICLE_COUNT = 600
-const PATH_SEGMENTS = 720
-const STAR_COUNT = 280
+const PARTICLE_COUNT = 300 // 减少粒子数量
+const PATH_SEGMENTS = 360 // 减少路径段数
+const STAR_COUNT = 150 // 减少星星数量
 const CUBE_VERTICES = [
     { x: -1, y: -1, z: -1 },
     { x: 1, y: -1, z: -1 },
@@ -600,11 +600,14 @@ const drawParticles = () => {
     const ctx = state.ctx
     const ribbon = state.ribbonHalfWidth || 1
     ctx.globalCompositeOperation = 'source-over'
-    ctx.fillStyle = 'rgba(3, 5, 15, 0.22)'
+    ctx.fillStyle = 'rgba(3, 5, 15, 0.32)' // 增加不透明度以减少拖尾效果的计算开销
     ctx.fillRect(0, 0, state.width, state.height)
 
-    drawBackgroundGrid()
-    drawEnergyPulses()
+    // 性能优化：降低背景效果的更新频率
+    if (state.rafId % 2 === 0) {
+        drawBackgroundGrid()
+        drawEnergyPulses()
+    }
 
     if (state.bgGradient) {
         ctx.globalAlpha = 0.6
@@ -652,14 +655,29 @@ const drawParticles = () => {
     ctx.restore()
 }
 
-const animate = () => {
+// 性能优化：降低帧率以减少CPU/GPU负载
+let lastFrameTime = 0
+const TARGET_FPS = 30 // 目标帧率降低到30fps
+const FRAME_INTERVAL = 1000 / TARGET_FPS
+
+const animate = (currentTime: number = 0) => {
+    state.rafId = requestAnimationFrame(animate)
+    
+    // 帧率限制
+    const elapsed = currentTime - lastFrameTime
+    if (elapsed < FRAME_INTERVAL) {
+        return
+    }
+    lastFrameTime = currentTime - (elapsed % FRAME_INTERVAL)
+    
     updateCubeState()
     updateParticles()
 
-    // 使用外部进度或自动增长
+    // 使用外部进度或自动增长（确保进度只增不减）
     if (loadProgress.value < 100) {
         if (props.externalProgress !== undefined) {
-            loadProgress.value = Math.min(100, props.externalProgress)
+            // 确保外部进度不会导致进度回退
+            loadProgress.value = Math.max(loadProgress.value, Math.min(100, props.externalProgress))
         } else {
             loadProgress.value = Math.min(100, loadProgress.value + 0.05)
         }
@@ -667,7 +685,6 @@ const animate = () => {
 
     updateScrambledWord()
     drawParticles()
-    state.rafId = requestAnimationFrame(animate)
 }
 
 const handleResize = () => {
@@ -726,7 +743,16 @@ const handlePointerLeave = () => {
 onMounted(() => {
     handleResize()
     window.addEventListener('resize', handleResize)
-    window.addEventListener('mousemove', handlePointerMove)
+    // 性能优化：使用节流来处理鼠标移动事件
+    let mouseMoveTimeout: number | undefined
+    const throttledPointerMove = (event: MouseEvent) => {
+        if (mouseMoveTimeout) return
+        mouseMoveTimeout = window.setTimeout(() => {
+            handlePointerMove(event)
+            mouseMoveTimeout = undefined
+        }, 50) // 每50ms最多更新一次
+    }
+    window.addEventListener('mousemove', throttledPointerMove)
     window.addEventListener('mouseleave', handlePointerLeave)
     state.rafId = requestAnimationFrame(animate)
 })

@@ -20,7 +20,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { VRMUtils } from '@pixiv/three-vrm'
 import { VRMAnimationLoaderPlugin } from '@pixiv/three-vrm-animation'
 import { VRMLookAtSmootherLoaderPlugin } from '@/avatar/libs/VRMLookAtSmootherLoaderPlugin/VRMLookAtSmootherLoaderPlugin'
-import { Preloader, PreloadResource, PreloaderEvent } from '@/avatar/utils/Preloader'
+import { PreloaderWithWorker as Preloader, PreloadResource, PreloaderEvent } from '@/avatar/utils/Preloader'
 import { VrmController } from '@/avatar/utils/VrmController'
 // @ts-ignore - GaussianSplats3D doesn't have type definitions
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
@@ -180,7 +180,7 @@ loader.register(parser => {
 // VRM控制器
 const vrmController = new VrmController()
 
-// 预加载器
+// 预加载器（使用 Worker 版本）
 const preloader = new Preloader()
 preloader.bindGLTFLoader(loader)
 
@@ -196,29 +196,42 @@ let forceWaitProgress = 0 // 强制等待进度 (0-100)
 
 // 计算总体加载进度
 function calculateTotalProgress(): number {
-    return Math.floor(
+    const calculated = Math.floor(
         resourceProgress * RESOURCE_LOADING_WEIGHT +
             sceneRenderingProgress * SCENE_RENDERING_WEIGHT +
             forceWaitProgress * FORCE_WAIT_WEIGHT
     )
+    // 确保进度只增不减
+    return Math.max(preloadProgress.value, calculated)
 }
 
 // 更新总体进度并触发事件
 function updateTotalProgress() {
     const totalProgress = calculateTotalProgress()
-    preloadProgress.value = totalProgress
-    emit('loading', totalProgress)
+    // 只在进度真正增加时才更新
+    if (totalProgress > preloadProgress.value) {
+        preloadProgress.value = totalProgress
+        emit('loading', totalProgress)
+    }
 }
 
 // 监听资源进度
 preloader.on(PreloaderEvent.PROGRESS, (progress: any) => {
     resourceProgress = progress
     updateTotalProgress()
+    
+    // 性能优化：在资源加载阶段暂停3D渲染以减少GPU负载
+    if (resourceProgress < 100) {
+        isPaused = true
+    }
 })
 
 // 监听资源加载完成
 preloader.on(PreloaderEvent.COMPLETED, (resources: any) => {
     console.log('VRM Preload completed', resources)
+    
+    // 资源加载完成，恢复渲染
+    isPaused = false
 
     const model = resources.getByName('model').data
     const modelVrm = model.userData.vrm
@@ -696,7 +709,7 @@ onMounted(async () => {
             console.log('Initial camera target:', controls.target)
         }
 
-        // 7. 预先导入VRM相关模块
+        // 7. 预先导入VRM相关模块并注册插件（必须在 preloader.load() 之前）
         const { VRMLoaderPlugin } = await import('@pixiv/three-vrm')
 
         // 注册VRM加载插件（WebGL模式，使用默认材质）
@@ -708,7 +721,9 @@ onMounted(async () => {
             return new VRMLoaderPlugin(parser, options)
         })
 
-        // 8. 开始预加载VRM资源
+        console.log('VRM plugins registered')
+
+        // 8. 开始预加载VRM资源（插件已注册）
         preloader.load()
 
         // 9. 使用 DropInViewer 方式创建 GaussianSplats3D Viewer
@@ -844,6 +859,11 @@ onUnmounted(() => {
     // 卸载事件
     window.removeEventListener('resize', onWindowResize)
     document.removeEventListener('visibilitychange', onVisibilityChange)
+
+    // 清理 Preloader Worker
+    if (preloader) {
+        preloader.dispose()
+    }
 
     // 清理VrmController
     if (vrmController) {

@@ -183,8 +183,14 @@ const handleSettingsSubmit = () => {
 // Avatar ref
 const avatarRef = ref<InstanceType<typeof Avatar> | null>(null)
 
-// 定时器获取 Avatar 加载进度并向外发送
-let progressInterval: number | undefined
+// 处理 Avatar 加载进度
+const handleAvatarProgress = (progress: number) => {
+    emit('loading', progress)
+}
+
+const handleAvatarReady = () => {
+    emit('ready')
+}
 
 onMounted(() => {
     const stored = loadStoredOpenRouterConfig()
@@ -192,26 +198,10 @@ onMounted(() => {
         settingsForm.apiKey = stored.apiKey ?? ''
         settingsForm.model = stored.model ?? settingsForm.model
     }
-
-    // 每 100ms 检查一次 Avatar 加载进度
-    progressInterval = window.setInterval(() => {
-        if (avatarRef.value) {
-            const progress = avatarRef.value.getLoadProgress()
-            emit('loading', progress)
-
-            // 加载完成后停止定时器
-            if (progress >= 100) {
-                clearInterval(progressInterval)
-                emit('ready')
-            }
-        }
-    }, 100)
 })
 
 onUnmounted(() => {
-    if (progressInterval !== undefined) {
-        clearInterval(progressInterval)
-    }
+    // 清理工作
 })
 
 // 暴露 Avatar 引用
@@ -228,7 +218,8 @@ defineExpose({
                 ref="avatarRef"
                 :show-fps="false"
                 :show-loading-progress="true"
-                @ready="() => console.log('Avatar ready')"
+                @loading="handleAvatarProgress"
+                @ready="handleAvatarReady"
             />
         </div>
 

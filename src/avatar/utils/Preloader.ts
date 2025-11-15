@@ -1,4 +1,5 @@
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import type { WorkerResource, WorkerMessage, WorkerResponse } from '../workers/preloader.worker'
 
 export enum PreloadResourceType {
     VRM = 'VRM',
@@ -24,8 +25,6 @@ export class PreloadResource {
     private name: string
     private url: string
     private type: PreloadResourceType
-    private size: number = 0
-    private sizeRetriver: Promise<void>
     private data: any
 
     constructor(url: string, name?: string) {
@@ -37,25 +36,6 @@ export class PreloadResource {
         } else {
             this.name = name
         }
-
-        // 获取资源大小
-        this.sizeRetriver = fetch(this.url, {
-            method: 'HEAD',
-        })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('资源加载失败')
-                }
-
-                let contentLength = response.headers.get('Content-Length')
-                if (contentLength && !isNaN(parseInt(contentLength))) {
-                    this.size = parseInt(contentLength)
-                }
-            })
-            .catch(error => {
-                console.error(error)
-                throw new Error('资源加载失败')
-            })
 
         // 判断资源类型
         let extension = this.url.split('.').pop()?.toLowerCase() ?? ''
@@ -89,14 +69,6 @@ export class PreloadResource {
         return this.type
     }
 
-    getSize() {
-        return this.size
-    }
-
-    getSizeRetriver() {
-        return this.sizeRetriver
-    }
-
     getData() {
         return this.data
     }
@@ -104,28 +76,38 @@ export class PreloadResource {
     setData(data: any) {
         this.data = data
     }
+
+    toWorkerResource(): WorkerResource {
+        return {
+            name: this.name,
+            url: this.url,
+            type: this.type,
+        }
+    }
 }
 
-export class Preloader {
+export class PreloaderWithWorker {
     private resources: PreloadResource[]
     private resourcesMap: Map<string, number>
-    private promises: Promise<void>[]
     private status: string
-    private progress: number
-    private totalBytes: number
-    private loadedBytes: number
     private gltfLoader: GLTFLoader | null
     private listeners: any
+    private worker: Worker | null
+    private loadedResourcesCount: number
+    private totalResourcesCount: number
+    private pendingGLTFLoads: Set<string>
+    private workerInitialized: boolean
 
     constructor() {
         this.resources = []
         this.resourcesMap = new Map()
-        this.promises = []
         this.status = PreloaderStatus.PENDING
-        this.progress = 0
-        this.totalBytes = 0
-        this.loadedBytes = 0
         this.gltfLoader = null
+        this.worker = null
+        this.loadedResourcesCount = 0
+        this.totalResourcesCount = 0
+        this.pendingGLTFLoads = new Set()
+        this.workerInitialized = false
         this.listeners = {
             progress: [],
             completed: [],
@@ -165,25 +147,6 @@ export class Preloader {
         this.gltfLoader = gltfLoader
     }
 
-    private updateProgress(delta: number) {
-        this.loadedBytes += delta
-
-        // 计算进度
-        let progress = Math.floor((this.loadedBytes / this.totalBytes) * 100)
-
-        if (progress > this.progress) {
-            this.progress = progress
-
-            // 触发事件
-            this.dispatchEvent({
-                type: PreloaderEvent.PROGRESS,
-                progress: progress,
-            })
-        }
-
-        return progress
-    }
-
     private dispatchEvent(event: any) {
         switch (event.type) {
             case PreloaderEvent.PROGRESS:
@@ -206,6 +169,161 @@ export class Preloader {
         }
     }
 
+    /**
+     * 检查是否所有资源都已加载完成
+     */
+    private checkAllResourcesLoaded() {
+        // 只有当所有资源都加载完成且没有待处理的 GLTF 加载时才触发完成事件
+        if (
+            this.loadedResourcesCount === this.totalResourcesCount &&
+            this.pendingGLTFLoads.size === 0
+        ) {
+            this.status = PreloaderStatus.COMPLETED
+
+            // 确保进度更新到 100%
+            this.dispatchEvent({
+                type: PreloaderEvent.PROGRESS,
+                progress: 100,
+            })
+
+            // 触发完成事件
+            this.dispatchEvent({
+                type: PreloaderEvent.COMPLETED,
+            })
+
+            // 清理 Worker
+            if (this.worker) {
+                this.worker.terminate()
+                this.worker = null
+            }
+        }
+    }
+
+    /**
+     * 使用 GLTFLoader 加载 ArrayBuffer（通过创建临时 Blob URL）
+     */
+    private loadGLTFFromBuffer(resource: PreloadResource, arrayBuffer: ArrayBuffer): Promise<void> {
+        return new Promise((resolve, reject) => {
+            if (!this.gltfLoader) {
+                const error = new Error('GLTFLoader未挂载')
+                console.error(error)
+                reject(error)
+                return
+            }
+
+            // 从 ArrayBuffer 创建 Blob URL
+            const blob = new Blob([arrayBuffer], { type: 'model/gltf-binary' })
+            const url = URL.createObjectURL(blob)
+
+            // 使用 load 方法加载（这样插件可以正常工作）
+            this.gltfLoader.load(
+                url,
+                (gltf: any) => {
+                    // 清理 Blob URL
+                    URL.revokeObjectURL(url)
+                    resource.setData(gltf)
+                    resolve()
+                },
+                undefined, // onProgress
+                (error: unknown) => {
+                    // 清理 Blob URL
+                    URL.revokeObjectURL(url)
+                    const err = error instanceof Error ? error : new Error(String(error))
+                    console.error('GLTF loading error:', err)
+                    reject(err)
+                }
+            )
+        })
+    }
+
+    /**
+     * 处理 Worker 消息
+     */
+    private handleWorkerMessage = async (event: MessageEvent<WorkerResponse>) => {
+        const { type, progress, resourceName, data, error } = event.data
+
+        switch (type) {
+            case 'PROGRESS':
+                if (progress !== undefined) {
+                    this.dispatchEvent({
+                        type: PreloaderEvent.PROGRESS,
+                        progress,
+                    })
+                }
+                break
+
+            case 'RESOURCE_LOADED':
+                if (resourceName && data) {
+                    const resource = this.getResource(resourceName)
+                    if (resource) {
+                        // 根据资源类型处理
+                        const resourceType = resource.getType()
+
+                        if (
+                            resourceType === PreloadResourceType.VRM ||
+                            resourceType === PreloadResourceType.VRMA
+                        ) {
+                            // GLTF 资源需要在主线程加载（使用 Blob URL）
+                            this.pendingGLTFLoads.add(resourceName)
+                            
+                            this.loadGLTFFromBuffer(resource, data)
+                                .then(() => {
+                                    this.pendingGLTFLoads.delete(resourceName)
+                                    this.loadedResourcesCount++
+                                    this.checkAllResourcesLoaded()
+                                })
+                                .catch((err) => {
+                                    this.pendingGLTFLoads.delete(resourceName)
+                                    this.dispatchEvent({
+                                        type: PreloaderEvent.ERROR,
+                                        error: err,
+                                    })
+                                })
+                        } else {
+                            // 其他资源直接保存 ArrayBuffer
+                            resource.setData(data)
+                            this.loadedResourcesCount++
+                        }
+                    }
+                }
+                break
+
+            case 'ALL_COMPLETED':
+                // Worker 已完成所有下载，但可能还有 GLTF 在主线程解析
+                this.checkAllResourcesLoaded()
+                break
+
+            case 'ERROR':
+                this.status = PreloaderStatus.ERROR
+                const err = new Error(error || 'Worker error')
+                this.dispatchEvent({
+                    type: PreloaderEvent.ERROR,
+                    error: err,
+                })
+
+                // 清理 Worker
+                if (this.worker) {
+                    this.worker.terminate()
+                    this.worker = null
+                }
+                break
+
+            case 'SIZE_READY':
+                this.workerInitialized = true
+                
+                // Worker 初始化完成，现在可以开始加载了
+                if (this.worker) {
+                    this.worker.postMessage({
+                        type: 'START_LOAD',
+                    } as WorkerMessage)
+                }
+                break
+
+            default:
+                console.warn('Unknown worker message type:', type)
+        }
+    }
+
     // 开始加载
     async load() {
         // 检查是否已经开始加载
@@ -213,190 +331,52 @@ export class Preloader {
             throw new Error('Preloader状态错误')
         }
 
-        // 等待资源大小获取完成
-        await Promise.all(this.resources.map(resource => resource.getSizeRetriver())).catch(
-            error => {
-                console.error('资源大小获取失败', error)
-                throw error
-            }
-        )
+        if (this.resources.length === 0) {
+            this.status = PreloaderStatus.COMPLETED
+            this.dispatchEvent({
+                type: PreloaderEvent.COMPLETED,
+            })
+            return
+        }
 
-        // 更新totalBytes
-        this.totalBytes = this.resources.reduce((total, resource) => total + resource.getSize(), 0)
+        try {
+            // 创建 Worker
+            this.worker = new Worker(
+                new URL('../workers/preloader.worker.ts', import.meta.url),
+                { type: 'module' }
+            )
 
-        // 更新状态
-        this.status = PreloaderStatus.LOADING
+            this.worker.addEventListener('message', this.handleWorkerMessage)
 
-        // 批量创建Promise
-        this.resources.forEach(resource => {
-            switch (resource.getType()) {
-                case PreloadResourceType.VRM:
-                    this.promises.push(this.loadGLTF(resource))
-                    break
-
-                case PreloadResourceType.VRMA:
-                    this.promises.push(this.loadGLTF(resource))
-                    break
-
-                case PreloadResourceType.SPLAT:
-                    this.promises.push(this.loadSplat(resource))
-                    break
-
-                default:
-                    this.promises.push(this.loadUnknown(resource))
-                    break
-            }
-        })
-
-        // 等待所有资源加载完成
-        await Promise.all(this.promises).catch(error => {
-            console.error('资源加载失败', error)
-            throw error
-        })
-
-        // 更新状态
-        this.status = PreloaderStatus.COMPLETED
-
-        // 触发事件
-        this.dispatchEvent({
-            type: 'completed',
-        })
-    }
-
-    private loadGLTF(resource: PreloadResource): Promise<void> {
-        return new Promise((resolve, reject) => {
-            let loadedBytes = 0
-            if (!this.gltfLoader) {
-                const error = new Error('GLTFLoader未挂载')
-                console.error(error)
-                reject(error)
+            this.worker.addEventListener('error', (error) => {
                 this.dispatchEvent({
                     type: PreloaderEvent.ERROR,
-                    error: error,
+                    error: new Error('Worker encountered an error'),
                 })
-                return
-            }
-            this.gltfLoader.load(
-                // VRM文件URL
-                resource.getUrl(),
+            })
 
-                // 加载完成回调
-                (gltf: any) => {
-                    resource.setData(gltf)
-                    resolve()
-                },
+            // 更新状态
+            this.status = PreloaderStatus.LOADING
+            this.loadedResourcesCount = 0
+            this.totalResourcesCount = this.resources.length
+            this.pendingGLTFLoads.clear()
+            this.workerInitialized = false
 
-                // 加载进度回调
-                (xhr: any) => {
-                    let delta = xhr.loaded - loadedBytes
-                    loadedBytes = xhr.loaded
-                    this.updateProgress(delta)
-                },
+            // 发送资源列表到 Worker
+            const workerResources = this.resources.map(r => r.toWorkerResource())
+            this.worker.postMessage({
+                type: 'INIT',
+                resources: workerResources,
+            } as WorkerMessage)
 
-                // 加载失败回调
-                (error: unknown) => {
-                    const err = error instanceof Error ? error : new Error(String(error))
-                    console.error(err)
-                    reject(err)
-                    this.dispatchEvent({
-                        type: PreloaderEvent.ERROR,
-                        error: err,
-                    })
-                }
-            )
-        })
-    }
-
-    private loadSplat(resource: PreloadResource): Promise<void> {
-        return new Promise((resolve, reject) => {
-            fetch(resource.getUrl())
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`)
-                    }
-                    return response.body
-                })
-                .then(async body => {
-                    const reader = body!.getReader()
-                    const chunks: Uint8Array[] = []
-
-                    while (true) {
-                        const { done, value } = await reader.read()
-
-                        if (done) break
-
-                        let delta = value!.byteLength
-                        this.updateProgress(delta)
-
-                        chunks.push(value!)
-                    }
-
-                    // 将 chunks 合并为一个 ArrayBuffer
-                    let totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
-                    let mergedArray = new Uint8Array(totalLength)
-                    let offset = 0
-                    for (let chunk of chunks) {
-                        mergedArray.set(chunk, offset)
-                        offset += chunk.length
-                    }
-
-                    // 保存为 ArrayBuffer
-                    resource.setData(mergedArray.buffer)
-                    resolve()
-                })
-                .catch(error => {
-                    console.error('Splat文件加载失败', error)
-                    reject(error)
-                    this.dispatchEvent({
-                        type: PreloaderEvent.ERROR,
-                        error: error,
-                    })
-                })
-        })
-    }
-
-    private loadUnknown(resource: PreloadResource): Promise<void> {
-        return new Promise((resolve, reject) => {
-            fetch(resource.getUrl())
-                .then(response => response!.body)
-                .then(async body => {
-                    const reader = body!.getReader()
-                    const chunks: Uint8Array[] = []
-
-                    while (true) {
-                        const { done, value } = await reader.read()
-
-                        if (done) break
-
-                        let delta = value!.byteLength
-                        this.updateProgress(delta)
-
-                        chunks.push(value!)
-                    }
-
-                    let totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
-                    let mergedArray = new Uint8Array(totalLength)
-                    let offset = 0
-                    for (let chunk of chunks) {
-                        mergedArray.set(chunk, offset)
-                        offset += chunk.length
-                    }
-
-                    let data = mergedArray.buffer
-                    resource.setData(data)
-
-                    resolve()
-                })
-                .catch(error => {
-                    console.error('资源加载失败', error)
-                    reject()
-                    this.dispatchEvent({
-                        type: PreloaderEvent.ERROR,
-                        error: error,
-                    })
-                    throw new Error('资源加载失败')
-                })
-        })
+            // 注意：不再立即发送 START_LOAD，等待 SIZE_READY 后再发送
+        } catch (error) {
+            this.dispatchEvent({
+                type: PreloaderEvent.ERROR,
+                error: error instanceof Error ? error : new Error(String(error)),
+            })
+            throw error
+        }
     }
 
     // 获取资源
@@ -408,5 +388,13 @@ export class Preloader {
     getResource(name: string) {
         let index = this.resourcesMap.get(name)
         return index !== undefined ? this.resources[index] : null
+    }
+
+    // 清理
+    dispose() {
+        if (this.worker) {
+            this.worker.terminate()
+            this.worker = null
+        }
     }
 }
