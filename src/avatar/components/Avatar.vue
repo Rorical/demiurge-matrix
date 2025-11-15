@@ -246,8 +246,6 @@ preloader.on(PreloaderEvent.COMPLETED, (resources: any) => {
         VRMUtils.rotateVRM0(modelVrm)
     }
 
-    console.log('VRM Model loaded', modelVrm)
-
     // 使用VrmController设置VRM模型
     vrmController.setVRM(modelVrm)
 
@@ -275,7 +273,6 @@ preloader.on(PreloaderEvent.COMPLETED, (resources: any) => {
         vrmScene.add(modelVrm.scene)
     }
 
-    console.log('VRM added to scene')
     emit('vrmLoaded', modelVrm)
 })
 
@@ -365,12 +362,6 @@ function updateVRMTransform() {
             lastVrmPosition = { ...vrmPosition.value }
             lastVrmRotation = { ...vrmRotation.value }
             lastVrmScale = vrmScale.value
-
-            console.log('VRM transform updated:', {
-                position: vrmPosition.value,
-                rotation: vrmRotation.value,
-                scale: vrmScale.value,
-            })
         }
     }
 }
@@ -412,7 +403,6 @@ function animate() {
         // 同步 GaussianSplat3D 的渲染就绪状态
         if (viewer && viewer.viewer && viewer.viewer.splatRenderReady && !gaussianSplatReady) {
             gaussianSplatReady = true
-            console.log('GaussianSplat3D render ready detected!')
         }
 
         // 初始加载时强制渲染若干帧，确保 GaussianSplat3D 完整显示
@@ -435,9 +425,6 @@ function animate() {
                 needUpdateBackground = false
             } else if (initialRenderFrames === INITIAL_RENDER_FRAME_COUNT) {
                 needUpdateBackground = false
-                console.log(
-                    `Initial background rendering completed (${INITIAL_RENDER_FRAME_COUNT} frames)`
-                )
             }
         }
 
@@ -483,7 +470,6 @@ function onWindowResize() {
 function onVisibilityChange() {
     if (document.hidden) {
         isPaused = true
-        console.log('Page hidden, rendering paused')
     } else {
         // 页面回到前台，恢复渲染
         isPaused = false
@@ -524,7 +510,6 @@ onMounted(async () => {
             throw new Error('Canvas element not found')
         }
 
-        console.log('Using WebGLRenderer (GaussianSplats3D requires WebGL)')
         renderer = new THREE.WebGLRenderer({
             canvas: canvas.value,
             antialias: props.antialias,
@@ -620,8 +605,6 @@ onMounted(async () => {
         skysphere.frustumCulled = false
         backgroundScene.add(skysphere)
 
-        console.log('Sky sphere created:', skysphere)
-
         // 添加环境光到背景场景
         const ambientLight = new THREE.AmbientLight(0xffffff, 4)
         backgroundScene.add(ambientLight)
@@ -699,14 +682,6 @@ onMounted(async () => {
             controls.maxDistance = props.maxDistance
 
             controls.update()
-
-            console.log('OrbitControls initialized')
-        }
-
-        console.log('Initial camera position:', camera.position)
-        console.log('Initial camera rotation:', camera.rotation)
-        if (controls) {
-            console.log('Initial camera target:', controls.target)
         }
 
         // 7. 预先导入VRM相关模块并注册插件（必须在 preloader.load() 之前）
@@ -720,8 +695,6 @@ onMounted(async () => {
 
             return new VRMLoaderPlugin(parser, options)
         })
-
-        console.log('VRM plugins registered')
 
         // 8. 开始预加载VRM资源（插件已注册）
         preloader.load()
@@ -745,13 +718,6 @@ onMounted(async () => {
                 const splatData = splatResource.getData()
                 const splatUrl = splatResource.getUrl()
 
-                console.log('Splat resource:', {
-                    hasData: !!splatData,
-                    dataType: typeof splatData,
-                    dataSize: splatData?.byteLength,
-                    url: splatUrl,
-                })
-
                 // 使用预加载的数据加载场景
                 await viewer.addSplatScenes(
                     [
@@ -763,17 +729,13 @@ onMounted(async () => {
                             position: props.splatPosition,
                         },
                     ],
-                    false
-                ) // 设置为 false 禁用 GaussianSplats3D 的内置加载UI
-
-                console.log('Gaussian Splat scene loaded successfully from preloader')
+                    false // 设置为 false 禁用 GaussianSplats3D 的内置加载UI
+                )
 
                 // 将viewer添加到背景场景中
                 if (backgroundScene) {
                     backgroundScene.add(viewer)
                 }
-
-                console.log('DropInViewer added to background scene')
 
                 // 初始渲染一次背景
                 needUpdateBackground = true
@@ -828,8 +790,6 @@ onMounted(async () => {
 
                     emit('loaded')
                     emit('ready')
-
-                    console.log('All loading completed (100%)')
                 }
             }
 

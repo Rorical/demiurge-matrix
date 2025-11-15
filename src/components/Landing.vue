@@ -655,14 +655,6 @@ const drawParticles = () => {
     })
 
     ctx.restore()
-    
-    // 如果使用离屏渲染，需要将离屏canvas内容复制到主canvas
-    if (state.isOffscreen && offscreenCanvas.value && canvasRef.value) {
-        const mainCtx = canvasRef.value.getContext('2d')
-        if (mainCtx) {
-            mainCtx.drawImage(offscreenCanvas.value, 0, 0)
-        }
-    }
 }
 
 // 性能优化：降低帧率以减少CPU/GPU负载

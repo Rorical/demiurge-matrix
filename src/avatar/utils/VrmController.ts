@@ -96,8 +96,6 @@ export class VrmController {
         this.clearVRM()
         this._vrm = vrm
 
-        console.log('VRM model set', vrm)
-
         this._vrm.scene.traverse((e: any) => {
             e.frustumCulled = false // 避免被裁剪
         })
@@ -359,10 +357,11 @@ export class VrmController {
         const resetSpringBoneDeltaThreshold = 0.5
         if (delta > resetSpringBoneDeltaThreshold) {
             requestAnimationFrame(() => {
-                console.log(`Reset spring bones due to large delta time: ${delta.toFixed(2)}s`)
-                if (this._vrm?.springBoneManager) {
-                    this._vrm.springBoneManager!.reset()
-                }
+                requestAnimationFrame(() => {
+                    if (this._vrm?.springBoneManager) {
+                        this._vrm.springBoneManager!.reset()
+                    }
+                })
             })
         }
 

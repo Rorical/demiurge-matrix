@@ -29,10 +29,6 @@ const handleAvatarLoading = (progress: number) => {
     avatarProgress.value = progress
 }
 
-const handleAvatarReady = () => {
-    console.log('Avatar ready, triggering Landing complete')
-}
-
 const handleLandingComplete = () => {
     curtainSkipTransition.value = true
     curtainPhase.value = 'hold'
@@ -139,7 +135,6 @@ onBeforeUnmount(() => {
             ref="coreRef"
             v-show="true"
             @loading="handleAvatarLoading"
-            @ready="handleAvatarReady"
         />
 
         <!-- Landing 遮罩层，加载完成后消失 -->
