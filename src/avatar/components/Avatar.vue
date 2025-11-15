@@ -1,14 +1,14 @@
 <script setup lang="ts">
 /**
  * Avatar Component - 可复用的 GaussianSplat + VRM 虚拟人物组件
- * 
+ *
  * 特性:
  * 1. VRM 和 GaussianSplat3D 共享同一个 THREE.Scene 和 WebGLRenderer
  * 2. VRM 每帧更新（保持动画流畅）
  * 3. GaussianSplat3D 只在相机移动时更新（减少 GPU 计算）
  * 4. 使用 VrmController 管理 VRM 动画和状态
  * 5. 支持通过 Props 配置模型、动画、场景等
- * 
+ *
  * 注意:
  * - GaussianSplats3D 库不支持 WebGPU，必须使用 WebGL 渲染器
  * - 天空球使用自定义 ShaderMaterial 实现渐变效果
@@ -18,7 +18,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { VRMUtils } from '@pixiv/three-vrm'
-import { VRMAnimationLoaderPlugin } from "@pixiv/three-vrm-animation"
+import { VRMAnimationLoaderPlugin } from '@pixiv/three-vrm-animation'
 import { VRMLookAtSmootherLoaderPlugin } from '@/avatar/libs/VRMLookAtSmootherLoaderPlugin/VRMLookAtSmootherLoaderPlugin'
 import { Preloader, PreloadResource, PreloaderEvent } from '@/avatar/utils/Preloader'
 import { VrmController } from '@/avatar/utils/VrmController'
@@ -30,21 +30,21 @@ interface Props {
     // VRM 模型配置
     modelUrl?: string
     animationUrl?: string
-    vrmPosition?: { x: number, y: number, z: number }
-    vrmRotation?: { x: number, y: number, z: number }
+    vrmPosition?: { x: number; y: number; z: number }
+    vrmRotation?: { x: number; y: number; z: number }
     vrmScale?: number
-    
+
     // GaussianSplat 场景配置
     splatScenePath?: string
     splatScale?: [number, number, number]
     splatPosition?: [number, number, number]
     splatAlphaRemovalThreshold?: number
-    
+
     // 相机配置
-    cameraPosition?: { x: number, y: number, z: number }
+    cameraPosition?: { x: number; y: number; z: number }
     cameraFov?: number
     cameraOffset?: number
-    
+
     // 控制器配置
     enableOrbitControls?: boolean
     enablePan?: boolean
@@ -56,12 +56,12 @@ interface Props {
     maxPolarAngle?: number
     minAzimuthAngle?: number
     maxAzimuthAngle?: number
-    
+
     // 渲染配置
     showFps?: boolean
     showLoadingProgress?: boolean
     antialias?: boolean
-    
+
     // 天空球颜色配置
     skyColors?: {
         bottom?: number
@@ -79,18 +79,18 @@ const props = withDefaults(defineProps<Props>(), {
     vrmPosition: () => ({ x: -1, y: 2.5, z: 8 }),
     vrmRotation: () => ({ x: 0, y: 0, z: 0 }),
     vrmScale: 1,
-    
+
     // GaussianSplat 默认配置
     splatScenePath: '/scenes/aedes_elysiae.splat',
     splatScale: () => [2, 2, 2] as [number, number, number],
     splatPosition: () => [0, 0, 0] as [number, number, number],
     splatAlphaRemovalThreshold: 60,
-    
+
     // 相机默认配置
     cameraPosition: () => ({ x: -0.82, y: 3.6, z: 11 }),
     cameraFov: 30,
     cameraOffset: 1,
-    
+
     // 控制器默认配置
     enableOrbitControls: true,
     enablePan: false,
@@ -102,20 +102,20 @@ const props = withDefaults(defineProps<Props>(), {
     maxPolarAngle: Math.PI * 0.55,
     minAzimuthAngle: -Math.PI * 0.5,
     maxAzimuthAngle: Math.PI * 0.5,
-    
+
     // 渲染默认配置
     showFps: false,
     showLoadingProgress: true,
     antialias: true,
-    
+
     // 天空球默认颜色
     skyColors: () => ({
         bottom: 0x5a829b,
         color1: 0xf3c5b2,
         color2: 0xf6dbb1,
         color3: 0x96c9f1,
-        top: 0x477cad
-    })
+        top: 0x477cad,
+    }),
 })
 
 // Emits 定义
@@ -153,17 +153,17 @@ let renderer: any = null
 let camera: THREE.PerspectiveCamera | null = null
 let controls: OrbitControls | null = null
 let skysphere: THREE.Mesh | null = null
-let isPaused = false  // 是否暂停渲染
+let isPaused = false // 是否暂停渲染
 
 // 背景渲染相关
-let backgroundScene: THREE.Scene | null = null  // 背景场景（GaussianSplat + 天空球）
-let vrmScene: THREE.Scene | null = null  // VRM 场景
-let backgroundRenderTarget: THREE.WebGLRenderTarget | null = null  // 背景渲染目标
-let backgroundPlane: THREE.Mesh | null = null  // 用于显示背景纹理的平面
-let needUpdateBackground = true  // 是否需要更新背景
-let initialRenderFrames = 0  // 初始渲染帧数计数器
-const INITIAL_RENDER_FRAME_COUNT = 60  // 初始强制渲染帧数（约1秒）
-let gaussianSplatReady = false  // GaussianSplat3D 是否已准备好（从 viewer.viewer.splatRenderReady 同步）
+let backgroundScene: THREE.Scene | null = null // 背景场景（GaussianSplat + 天空球）
+let vrmScene: THREE.Scene | null = null // VRM 场景
+let backgroundRenderTarget: THREE.WebGLRenderTarget | null = null // 背景渲染目标
+let backgroundPlane: THREE.Mesh | null = null // 用于显示背景纹理的平面
+let needUpdateBackground = true // 是否需要更新背景
+let initialRenderFrames = 0 // 初始渲染帧数计数器
+const INITIAL_RENDER_FRAME_COUNT = 60 // 初始强制渲染帧数（约1秒）
+let gaussianSplatReady = false // GaussianSplat3D 是否已准备好（从 viewer.viewer.splatRenderReady 同步）
 
 // VRM 引用
 let vrmModel: any = null
@@ -173,7 +173,7 @@ const loader = new GLTFLoader()
 loader.crossOrigin = 'anonymous'
 
 // 注册VRMA加载插件
-loader.register((parser) => {
+loader.register(parser => {
     return new VRMAnimationLoaderPlugin(parser)
 })
 
@@ -185,21 +185,21 @@ const preloader = new Preloader()
 preloader.bindGLTFLoader(loader)
 
 // 总体加载进度管理
-const RESOURCE_LOADING_WEIGHT = 0.90  // 资源加载占90%
-const SCENE_RENDERING_WEIGHT = 0.05   // 场景渲染占5%
-const FORCE_WAIT_WEIGHT = 0.05        // 强制等待占5%
-const FORCE_WAIT_DURATION = 1000      // 强制等待1秒
+const RESOURCE_LOADING_WEIGHT = 0.9 // 资源加载占90%
+const SCENE_RENDERING_WEIGHT = 0.05 // 场景渲染占5%
+const FORCE_WAIT_WEIGHT = 0.05 // 强制等待占5%
+const FORCE_WAIT_DURATION = 1000 // 强制等待1秒
 
-let resourceProgress = 0              // 资源加载进度 (0-100)
-let sceneRenderingProgress = 0        // 场景渲染进度 (0-100)
-let forceWaitProgress = 0             // 强制等待进度 (0-100)
+let resourceProgress = 0 // 资源加载进度 (0-100)
+let sceneRenderingProgress = 0 // 场景渲染进度 (0-100)
+let forceWaitProgress = 0 // 强制等待进度 (0-100)
 
 // 计算总体加载进度
 function calculateTotalProgress(): number {
     return Math.floor(
         resourceProgress * RESOURCE_LOADING_WEIGHT +
-        sceneRenderingProgress * SCENE_RENDERING_WEIGHT +
-        forceWaitProgress * FORCE_WAIT_WEIGHT
+            sceneRenderingProgress * SCENE_RENDERING_WEIGHT +
+            forceWaitProgress * FORCE_WAIT_WEIGHT
     )
 }
 
@@ -237,16 +237,16 @@ preloader.on(PreloaderEvent.COMPLETED, (resources: any) => {
 
     // 使用VrmController设置VRM模型
     vrmController.setVRM(modelVrm)
-    
+
     // 保存VRM引用，用于位置控制
     vrmModel = modelVrm
 
     // 初始化 VRM 位置（只设置一次）
     vrmModel.scene.position.set(vrmPosition.value.x, vrmPosition.value.y, vrmPosition.value.z)
     vrmModel.scene.rotation.set(
-        vrmRotation.value.x * Math.PI / 180,
-        vrmRotation.value.y * Math.PI / 180,
-        vrmRotation.value.z * Math.PI / 180
+        (vrmRotation.value.x * Math.PI) / 180,
+        (vrmRotation.value.y * Math.PI) / 180,
+        (vrmRotation.value.z * Math.PI) / 180
     )
     vrmModel.scene.scale.setScalar(vrmScale.value)
 
@@ -282,28 +282,28 @@ let fpsUpdateTime = 0
 // 相机移动检测
 const cameraState = {
     position: new THREE.Vector3(),
-    quaternion: new THREE.Quaternion()
+    quaternion: new THREE.Quaternion(),
 }
-const cameraMoveThreshold = 0.001  // 位置阈值
-const cameraRotateThreshold = 0.01  // 旋转阈值（弧度）
+const cameraMoveThreshold = 0.001 // 位置阈值
+const cameraRotateThreshold = 0.01 // 旋转阈值（弧度）
 
 /**
  * 检测相机是否移动
  */
 function hasCameraMoved(): boolean {
     if (!camera) return false
-    
+
     const positionMoved = camera.position.distanceTo(cameraState.position) > cameraMoveThreshold
     const rotationMoved = camera.quaternion.angleTo(cameraState.quaternion) > cameraRotateThreshold
-    
+
     if (positionMoved || rotationMoved) {
         // 更新缓存状态
         cameraState.position.copy(camera.position)
         cameraState.quaternion.copy(camera.quaternion)
-        needUpdateBackground = true  // 标记需要更新背景
+        needUpdateBackground = true // 标记需要更新背景
         return true
     }
-    
+
     return false
 }
 
@@ -313,46 +313,50 @@ function hasCameraMoved(): boolean {
 function updateVRMTransform() {
     if (vrmModel && vrmModel.scene) {
         // 检测 VRM 变换参数是否真正改变
-        const positionChanged = 
+        const positionChanged =
             vrmPosition.value.x !== lastVrmPosition.x ||
             vrmPosition.value.y !== lastVrmPosition.y ||
             vrmPosition.value.z !== lastVrmPosition.z
-        
-        const rotationChanged = 
+
+        const rotationChanged =
             vrmRotation.value.x !== lastVrmRotation.x ||
             vrmRotation.value.y !== lastVrmRotation.y ||
             vrmRotation.value.z !== lastVrmRotation.z
-        
+
         const scaleChanged = vrmScale.value !== lastVrmScale
-        
+
         // 只有在变换参数真正改变时才更新
         const hasChanged = positionChanged || rotationChanged || scaleChanged
-        
+
         if (hasChanged) {
-            vrmModel.scene.position.set(vrmPosition.value.x, vrmPosition.value.y, vrmPosition.value.z)
+            vrmModel.scene.position.set(
+                vrmPosition.value.x,
+                vrmPosition.value.y,
+                vrmPosition.value.z
+            )
             vrmModel.scene.rotation.set(
-                vrmRotation.value.x * Math.PI / 180,
-                vrmRotation.value.y * Math.PI / 180,
-                vrmRotation.value.z * Math.PI / 180
+                (vrmRotation.value.x * Math.PI) / 180,
+                (vrmRotation.value.y * Math.PI) / 180,
+                (vrmRotation.value.z * Math.PI) / 180
             )
             vrmModel.scene.scale.setScalar(vrmScale.value)
-            
+
             // 更新 OrbitControls 的旋转中心为 VRM 模型中心（头部/胸部位置）
             if (controls) {
-                const vrmCenterY = vrmPosition.value.y + props.cameraOffset * vrmScale.value  // 根据缩放调整
+                const vrmCenterY = vrmPosition.value.y + props.cameraOffset * vrmScale.value // 根据缩放调整
                 controls.target.set(vrmPosition.value.x, vrmCenterY, vrmPosition.value.z)
                 controls.update()
             }
-            
+
             // 更新缓存的变换参数
             lastVrmPosition = { ...vrmPosition.value }
             lastVrmRotation = { ...vrmRotation.value }
             lastVrmScale = vrmScale.value
-            
+
             console.log('VRM transform updated:', {
                 position: vrmPosition.value,
                 rotation: vrmRotation.value,
-                scale: vrmScale.value
+                scale: vrmScale.value,
             })
         }
     }
@@ -363,16 +367,16 @@ function updateVRMTransform() {
  */
 function animate() {
     animationId = requestAnimationFrame(animate)
-    
+
     // 如果暂停则不渲染，同时不获取 delta 时间（避免累积）
     if (isPaused) {
         return
     }
-    
+
     if (renderer && camera && vrmScene && backgroundScene && backgroundRenderTarget) {
         // 只有在渲染时才获取 delta，这样暂停期间不会累积时间
         const delta = clock.getDelta()
-        
+
         // 更新 FPS（在这里计算整体渲染帧率）
         if (props.showFps) {
             frameCount++
@@ -383,50 +387,53 @@ function animate() {
                 fpsUpdateTime -= 1 // 保留超出1秒的部分，保持计算连续性
             }
         }
-        
+
         // 更新控制器
         if (controls) {
             controls.update()
         }
-        
+
         // 检测相机是否移动
         hasCameraMoved()
-        
+
         // 同步 GaussianSplat3D 的渲染就绪状态
         if (viewer && viewer.viewer && viewer.viewer.splatRenderReady && !gaussianSplatReady) {
             gaussianSplatReady = true
             console.log('GaussianSplat3D render ready detected!')
         }
-        
+
         // 初始加载时强制渲染若干帧，确保 GaussianSplat3D 完整显示
         // 只有当 GaussianSplat3D 准备好后才开始计数
-        const forceInitialRender = gaussianSplatReady && initialRenderFrames < INITIAL_RENDER_FRAME_COUNT
+        const forceInitialRender =
+            gaussianSplatReady && initialRenderFrames < INITIAL_RENDER_FRAME_COUNT
         if (forceInitialRender) {
             initialRenderFrames++
             needUpdateBackground = true
         }
-        
+
         // 只在相机移动时或初始加载时更新背景（GaussianSplat3D + 天空球）
         if (needUpdateBackground) {
             // 渲染背景场景到 RenderTarget
             renderer.setRenderTarget(backgroundRenderTarget)
             renderer.render(backgroundScene, camera)
             renderer.setRenderTarget(null)
-            
+
             if (!forceInitialRender) {
                 needUpdateBackground = false
             } else if (initialRenderFrames === INITIAL_RENDER_FRAME_COUNT) {
                 needUpdateBackground = false
-                console.log(`Initial background rendering completed (${INITIAL_RENDER_FRAME_COUNT} frames)`)
+                console.log(
+                    `Initial background rendering completed (${INITIAL_RENDER_FRAME_COUNT} frames)`
+                )
             }
         }
-        
+
         // 更新VRM（每帧都更新）
         if (vrmController.hasVRM()) {
             vrmController.update(delta)
             updateVRMTransform()
         }
-        
+
         // 渲染 VRM 场景（包含背景纹理平面）
         renderer.render(vrmScene, camera)
     }
@@ -441,17 +448,17 @@ function onWindowResize() {
         // 因为 canvas 的 CSS 尺寸可能还没有更新
         const width = window.innerWidth
         const height = window.innerHeight
-        
+
         camera.aspect = width / height
         camera.updateProjectionMatrix()
         renderer.setSize(width, height)
-        
+
         // 更新 RenderTarget 尺寸
         backgroundRenderTarget.setSize(
             width * window.devicePixelRatio,
             height * window.devicePixelRatio
         )
-        
+
         // 标记需要更新背景
         needUpdateBackground = true
     }
@@ -473,17 +480,28 @@ function onVisibilityChange() {
 }
 
 // 监听 Props 变化
-watch(() => props.vrmPosition, (newVal) => {
-    vrmPosition.value = { ...newVal }
-}, { deep: true })
+watch(
+    () => props.vrmPosition,
+    newVal => {
+        vrmPosition.value = { ...newVal }
+    },
+    { deep: true }
+)
 
-watch(() => props.vrmRotation, (newVal) => {
-    vrmRotation.value = { ...newVal }
-}, { deep: true })
+watch(
+    () => props.vrmRotation,
+    newVal => {
+        vrmRotation.value = { ...newVal }
+    },
+    { deep: true }
+)
 
-watch(() => props.vrmScale, (newVal) => {
-    vrmScale.value = newVal
-})
+watch(
+    () => props.vrmScale,
+    newVal => {
+        vrmScale.value = newVal
+    }
+)
 
 onMounted(async () => {
     try {
@@ -492,19 +510,19 @@ onMounted(async () => {
         if (!canvas.value) {
             throw new Error('Canvas element not found')
         }
-        
+
         console.log('Using WebGLRenderer (GaussianSplats3D requires WebGL)')
-        renderer = new THREE.WebGLRenderer({ 
+        renderer = new THREE.WebGLRenderer({
             canvas: canvas.value,
-            antialias: props.antialias
+            antialias: props.antialias,
         })
-        
+
         // 使用 window 尺寸确保准确性
         const width = window.innerWidth
         const height = window.innerHeight
         renderer.setSize(width, height)
         renderer.setPixelRatio(window.devicePixelRatio)
-        
+
         // 2. 创建 RenderTarget 用于背景渲染
         backgroundRenderTarget = new THREE.WebGLRenderTarget(
             width * window.devicePixelRatio,
@@ -515,13 +533,13 @@ onMounted(async () => {
                 format: THREE.RGBAFormat,
             }
         )
-        
+
         // 3. 创建背景场景（GaussianSplat + 天空球）
         backgroundScene = new THREE.Scene()
-        
+
         // 创建天空球（半径调整为80，在远裁剪平面内）
         const skyGeometry = new THREE.SphereGeometry(80, 64, 64)
-        
+
         // 创建渐变材质的顶点着色器
         const skyVertexShader = `
             varying vec3 vWorldPosition;
@@ -531,7 +549,7 @@ onMounted(async () => {
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
         `
-        
+
         // 创建渐变材质的片段着色器
         const skyFragmentShader = `
             uniform vec3 bottomColor;
@@ -569,7 +587,7 @@ onMounted(async () => {
                 gl_FragColor = vec4(color, 1.0);
             }
         `
-        
+
         const skyMaterial = new THREE.ShaderMaterial({
             vertexShader: skyVertexShader,
             fragmentShader: skyFragmentShader,
@@ -578,31 +596,31 @@ onMounted(async () => {
                 color1: { value: new THREE.Color(props.skyColors.color1) },
                 color2: { value: new THREE.Color(props.skyColors.color2) },
                 color3: { value: new THREE.Color(props.skyColors.color3) },
-                topColor: { value: new THREE.Color(props.skyColors.top) }
+                topColor: { value: new THREE.Color(props.skyColors.top) },
             },
-            side: THREE.BackSide,  // 从内部看
-            depthWrite: false
+            side: THREE.BackSide, // 从内部看
+            depthWrite: false,
         })
-        
+
         skysphere = new THREE.Mesh(skyGeometry, skyMaterial)
-        skysphere.renderOrder = -1  // 最先渲染（背景）
+        skysphere.renderOrder = -1 // 最先渲染（背景）
         skysphere.frustumCulled = false
         backgroundScene.add(skysphere)
-        
+
         console.log('Sky sphere created:', skysphere)
-        
+
         // 添加环境光到背景场景
         const ambientLight = new THREE.AmbientLight(0xffffff, 4)
         backgroundScene.add(ambientLight)
-        
+
         // 4. 创建 VRM 场景
         vrmScene = new THREE.Scene()
-        
+
         // 创建一个全屏平面来显示背景纹理
         const backgroundGeometry = new THREE.PlaneGeometry(2, 2)
         const backgroundMaterial = new THREE.ShaderMaterial({
             uniforms: {
-                tBackground: { value: backgroundRenderTarget.texture }
+                tBackground: { value: backgroundRenderTarget.texture },
             },
             vertexShader: `
                 varying vec2 vUv;
@@ -619,44 +637,44 @@ onMounted(async () => {
                 }
             `,
             depthTest: false,
-            depthWrite: false
+            depthWrite: false,
         })
-        
+
         backgroundPlane = new THREE.Mesh(backgroundGeometry, backgroundMaterial)
-        backgroundPlane.renderOrder = -1000  // 最先渲染
+        backgroundPlane.renderOrder = -1000 // 最先渲染
         backgroundPlane.frustumCulled = false
         vrmScene.add(backgroundPlane)
-        
+
         // 添加环境光到 VRM 场景
         const vrmAmbientLight = new THREE.AmbientLight(0xffffff, 4)
         vrmScene.add(vrmAmbientLight)
-        
+
         // 5. 创建相机
         camera = new THREE.PerspectiveCamera(
             props.cameraFov,
             width / height,
             0.1,
-            100  // 缩短远裁剪平面，降低渲染距离
+            100 // 缩短远裁剪平面，降低渲染距离
         )
         // 设置默认摄像头位置
         camera.position.set(props.cameraPosition.x, props.cameraPosition.y, props.cameraPosition.z)
-        
+
         // 初始化相机状态缓存
         cameraState.position.copy(camera.position)
         cameraState.quaternion.copy(camera.quaternion)
-        
+
         // 6. 创建控制器
         if (props.enableOrbitControls) {
             controls = new OrbitControls(camera, renderer.domElement)
             // 旋转中心设置为 VRM 模型的头部/胸部位置
             const vrmCenterY = vrmPosition.value.y + props.cameraOffset
             controls.target.set(vrmPosition.value.x, vrmCenterY, vrmPosition.value.z)
-            
+
             // 控制器配置
             controls.enablePan = props.enablePan
             controls.enableRotate = props.enableRotate
             controls.enableZoom = props.enableZoom
-            
+
             // 相机旋转限制
             controls.minPolarAngle = props.minPolarAngle
             controls.maxPolarAngle = props.maxPolarAngle
@@ -666,33 +684,33 @@ onMounted(async () => {
             // 缩放限制
             controls.minDistance = props.minDistance
             controls.maxDistance = props.maxDistance
-            
+
             controls.update()
-            
+
             console.log('OrbitControls initialized')
         }
-        
+
         console.log('Initial camera position:', camera.position)
         console.log('Initial camera rotation:', camera.rotation)
         if (controls) {
             console.log('Initial camera target:', controls.target)
         }
-        
+
         // 7. 预先导入VRM相关模块
         const { VRMLoaderPlugin } = await import('@pixiv/three-vrm')
-        
+
         // 注册VRM加载插件（WebGL模式，使用默认材质）
-        loader.register((parser) => {
+        loader.register(parser => {
             const options: any = {
-                lookAtPlugin: new VRMLookAtSmootherLoaderPlugin(parser)
+                lookAtPlugin: new VRMLookAtSmootherLoaderPlugin(parser),
             }
-            
+
             return new VRMLoaderPlugin(parser, options)
         })
-        
+
         // 8. 开始预加载VRM资源
         preloader.load()
-        
+
         // 9. 使用 DropInViewer 方式创建 GaussianSplats3D Viewer
         viewer = new GaussianSplats3D.DropInViewer({
             sharedMemoryForWorkers: false,
@@ -703,7 +721,7 @@ onMounted(async () => {
             // 使用 Instant 模式禁用渐进式加载，确保场景立即完整显示
             sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
         })
-        
+
         // 10. 等待预加载完成，然后使用预加载的数据
         preloader.on(PreloaderEvent.COMPLETED, async (resources: any) => {
             try {
@@ -711,52 +729,55 @@ onMounted(async () => {
                 const splatResource = resources.getByName('splat_scene')
                 const splatData = splatResource.getData()
                 const splatUrl = splatResource.getUrl()
-                
-                console.log('Splat resource:', { 
-                    hasData: !!splatData, 
+
+                console.log('Splat resource:', {
+                    hasData: !!splatData,
                     dataType: typeof splatData,
                     dataSize: splatData?.byteLength,
-                    url: splatUrl 
+                    url: splatUrl,
                 })
-                
+
                 // 使用预加载的数据加载场景
-                await viewer.addSplatScenes([
-                    {
-                        data: splatData,  // 使用预加载的 ArrayBuffer
-                        path: splatUrl,   // 提供原始路径用于文件类型检测
-                        splatAlphaRemovalThreshold: props.splatAlphaRemovalThreshold,
-                        scale: props.splatScale,
-                        position: props.splatPosition,
-                    }
-                ], false)  // 设置为 false 禁用 GaussianSplats3D 的内置加载UI
-                
+                await viewer.addSplatScenes(
+                    [
+                        {
+                            data: splatData, // 使用预加载的 ArrayBuffer
+                            path: splatUrl, // 提供原始路径用于文件类型检测
+                            splatAlphaRemovalThreshold: props.splatAlphaRemovalThreshold,
+                            scale: props.splatScale,
+                            position: props.splatPosition,
+                        },
+                    ],
+                    false
+                ) // 设置为 false 禁用 GaussianSplats3D 的内置加载UI
+
                 console.log('Gaussian Splat scene loaded successfully from preloader')
-                
+
                 // 将viewer添加到背景场景中
                 if (backgroundScene) {
                     backgroundScene.add(viewer)
                 }
-                
+
                 console.log('DropInViewer added to background scene')
-                
+
                 // 初始渲染一次背景
                 needUpdateBackground = true
-                
+
                 // 开始动画循环
                 animate()
-                
+
                 emit('splatLoaded')
-                
+
                 // ===== 场景渲染阶段 (5%) =====
                 // 等待场景初始渲染完成
                 const renderStartTime = Date.now()
                 const renderDuration = 100 // 100ms 用于场景渲染
-                
+
                 const updateRenderProgress = () => {
                     const elapsed = Date.now() - renderStartTime
                     sceneRenderingProgress = Math.min(100, (elapsed / renderDuration) * 100)
                     updateTotalProgress()
-                    
+
                     if (sceneRenderingProgress < 100) {
                         requestAnimationFrame(updateRenderProgress)
                     } else {
@@ -764,9 +785,8 @@ onMounted(async () => {
                         startForceWait()
                     }
                 }
-                
+
                 updateRenderProgress()
-                
             } catch (error: any) {
                 console.error('Failed to load Gaussian Splat scene:', error)
                 isLoading.value = false
@@ -774,39 +794,38 @@ onMounted(async () => {
                 emit('error', error)
             }
         })
-        
+
         // ===== 强制等待阶段 (5%) =====
         const startForceWait = () => {
             const waitStartTime = Date.now()
-            
+
             const updateWaitProgress = () => {
                 const elapsed = Date.now() - waitStartTime
                 forceWaitProgress = Math.min(100, (elapsed / FORCE_WAIT_DURATION) * 100)
                 updateTotalProgress()
-                
+
                 if (forceWaitProgress < 100) {
                     requestAnimationFrame(updateWaitProgress)
                 } else {
                     // 所有加载完成
                     isLoading.value = false
                     preloadProgress.value = 100
-                    
+
                     emit('loaded')
                     emit('ready')
-                    
+
                     console.log('All loading completed (100%)')
                 }
             }
-            
+
             updateWaitProgress()
         }
 
         // 监听窗口变化
         window.addEventListener('resize', onWindowResize)
-        
+
         // 监听页面可见性变化
         document.addEventListener('visibilitychange', onVisibilityChange)
-        
     } catch (error: any) {
         console.error('Failed to initialize Avatar component:', error)
         isLoading.value = false
@@ -830,23 +849,23 @@ onUnmounted(() => {
     if (vrmController) {
         vrmController.clearVRM()
     }
-    
+
     // 清理VRM引用
     vrmModel = null
-    
+
     // 清理背景平面
     if (backgroundPlane) {
         if (backgroundPlane.geometry) backgroundPlane.geometry.dispose()
         if (backgroundPlane.material) (backgroundPlane.material as THREE.Material).dispose()
         backgroundPlane = null
     }
-    
+
     // 清理 RenderTarget
     if (backgroundRenderTarget) {
         backgroundRenderTarget.dispose()
         backgroundRenderTarget = null
     }
-    
+
     // 清理天空球
     if (skysphere) {
         if (skysphere.geometry) skysphere.geometry.dispose()
@@ -869,18 +888,18 @@ onUnmounted(() => {
         }
         viewer = null
     }
-    
+
     // 清理场景
     if (backgroundScene) {
         backgroundScene.clear()
         backgroundScene = null
     }
-    
+
     if (vrmScene) {
         vrmScene.clear()
         vrmScene = null
     }
-    
+
     // 销毁渲染器
     if (renderer) {
         renderer.dispose()
@@ -889,7 +908,7 @@ onUnmounted(() => {
         }
         renderer = null
     }
-    
+
     camera = null
 })
 
@@ -900,10 +919,18 @@ defineExpose({
     getCamera: () => camera,
     getRenderer: () => renderer,
     getControls: () => controls,
-    pause: () => { isPaused = true },
-    resume: () => { isPaused = false; clock.getDelta(); needUpdateBackground = true },
-    forceBackgroundUpdate: () => { needUpdateBackground = true },
-    getLoadProgress: () => preloadProgress.value
+    pause: () => {
+        isPaused = true
+    },
+    resume: () => {
+        isPaused = false
+        clock.getDelta()
+        needUpdateBackground = true
+    },
+    forceBackgroundUpdate: () => {
+        needUpdateBackground = true
+    },
+    getLoadProgress: () => preloadProgress.value,
 })
 </script>
 

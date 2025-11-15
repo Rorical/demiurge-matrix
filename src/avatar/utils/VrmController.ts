@@ -1,7 +1,11 @@
-import * as THREE from "three"
-import { VRM } from "@pixiv/three-vrm"
-import { createVRMAnimationClip, VRMAnimation, VRMLookAtQuaternionProxy } from "@pixiv/three-vrm-animation"
-import { VRMLookAtSmoother } from "@/avatar/libs/VRMLookAtSmootherLoaderPlugin/VRMLookAtSmoother"
+import * as THREE from 'three'
+import { VRM } from '@pixiv/three-vrm'
+import {
+    createVRMAnimationClip,
+    VRMAnimation,
+    VRMLookAtQuaternionProxy,
+} from '@pixiv/three-vrm-animation'
+import { VRMLookAtSmoother } from '@/avatar/libs/VRMLookAtSmootherLoaderPlugin/VRMLookAtSmoother'
 
 export class VrmController {
     private _vrm: VRM | null
@@ -41,7 +45,8 @@ export class VrmController {
      * 重置眨眼计时器
      */
     private _resetBlinkTimer() {
-        this._nextBlinkTime = this._blinkIntervalMin + 
+        this._nextBlinkTime =
+            this._blinkIntervalMin +
             Math.random() * (this._blinkIntervalMax - this._blinkIntervalMin)
         this._blinkTimer = 0
     }
@@ -92,7 +97,7 @@ export class VrmController {
         this._vrm = vrm
 
         console.log('VRM model set', vrm)
-        
+
         this._vrm.scene.traverse((e: any) => {
             e.frustumCulled = false // 避免被裁剪
         })
@@ -106,21 +111,23 @@ export class VrmController {
 
         const lookAt = this._vrm.lookAt
         if (lookAt) {
-            const head = this._vrm.humanoid.getRawBoneNode("head")
+            const head = this._vrm.humanoid.getRawBoneNode('head')
             if (head && !lookAt.target) {
                 const lookAtInvHeadWorld = new THREE.Object3D()
-                lookAtInvHeadWorld.name = "lookAtInvHeadWorld"
+                lookAtInvHeadWorld.name = 'lookAtInvHeadWorld'
                 head.updateWorldMatrix(true, false)
                 lookAt.getLookAtWorldQuaternion(new THREE.Quaternion())
-                lookAtInvHeadWorld.quaternion.copy(new THREE.Quaternion().copy(new THREE.Quaternion()).invert())
+                lookAtInvHeadWorld.quaternion.copy(
+                    new THREE.Quaternion().copy(new THREE.Quaternion()).invert()
+                )
                 head.add(lookAtInvHeadWorld)
 
                 const lookAtTargetParent = new THREE.Object3D()
-                lookAtTargetParent.name = "lookAtTargetParent"
+                lookAtTargetParent.name = 'lookAtTargetParent'
                 lookAtInvHeadWorld.add(lookAtTargetParent)
 
                 const lookAtTarget = new THREE.Object3D()
-                lookAtTarget.name = "lookAtTarget"
+                lookAtTarget.name = 'lookAtTarget'
                 lookAtTarget.position.set(0, 0, 1)
                 lookAtTargetParent.add(lookAtTarget)
 
@@ -176,7 +183,7 @@ export class VrmController {
         const animationMixer = this._animationMixer
 
         const transition = options.transition !== undefined ? options.transition : 0.5
-        
+
         // 打断当前动作
         if (this._activeActionName) {
             this._actions.get(this._activeActionName)?.fadeOut(transition)
@@ -190,21 +197,21 @@ export class VrmController {
         }
 
         const onFinished = () => {
-            animationMixer.removeEventListener("finished", onFinished)
-            animationMixer.removeEventListener("loop", onLoop)
+            animationMixer.removeEventListener('finished', onFinished)
+            animationMixer.removeEventListener('loop', onLoop)
             this.endAction()
             if (options.onFinished) {
                 options.onFinished(vrm)
             }
         }
-        
-        animationMixer.addEventListener("finished", onFinished)
-        animationMixer.addEventListener("loop", onLoop)
+
+        animationMixer.addEventListener('finished', onFinished)
+        animationMixer.addEventListener('loop', onLoop)
 
         // 播放新动作
         const action = this._actions.get(name)
         if (!action) return
-        
+
         action.reset()
         action.setLoop(options.loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity)
         action.time = options.startTime || 0
@@ -266,7 +273,7 @@ export class VrmController {
             // 删除已存在的动作
             this.unregisterVRMAnimation(name)
         }
-        
+
         const animationClip = createVRMAnimationClip(animation, this._vrm)
         const animationAction = this._animationMixer.clipAction(animationClip)
 
@@ -563,7 +570,7 @@ export class VrmController {
                 transition: 0,
                 startTime: action?.time || 0,
                 paused: action?.paused || false,
-                resetSpringBones: false
+                resetSpringBones: false,
             }
             this.playAction(this._activeActionName, options)
         }
@@ -577,13 +584,13 @@ export class VrmController {
         const expressionManager = this._vrm.expressionManager
         if (!expressionManager || !expressionManager.expressionMap.neutral) return
 
-        const angry = expressionManager.getValue("Angry") || 0
-        const happy = expressionManager.getValue("Happy") || 0
-        const relaxed = expressionManager.getValue("Relaxed") || 0
-        const sad = expressionManager.getValue("Sad") || 0
-        const surprised = expressionManager.getValue("Surprised") || 0
+        const angry = expressionManager.getValue('Angry') || 0
+        const happy = expressionManager.getValue('Happy') || 0
+        const relaxed = expressionManager.getValue('Relaxed') || 0
+        const sad = expressionManager.getValue('Sad') || 0
+        const surprised = expressionManager.getValue('Surprised') || 0
 
         const neutral = Math.max(0, 1 - (angry + happy + relaxed + sad + surprised))
-        expressionManager.setValue("neutral", neutral)
+        expressionManager.setValue('neutral', neutral)
     }
 }

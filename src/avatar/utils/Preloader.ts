@@ -4,20 +4,20 @@ export enum PreloadResourceType {
     VRM = 'VRM',
     VRMA = 'VRMA',
     SPLAT = 'SPLAT',
-    UNKNOWN = 'UNKNOWN'
+    UNKNOWN = 'UNKNOWN',
 }
 
 export enum PreloaderStatus {
     PENDING = 'pending',
     LOADING = 'loading',
     COMPLETED = 'completed',
-    ERROR = 'error'
+    ERROR = 'error',
 }
 
 export enum PreloaderEvent {
     PROGRESS = 'progress',
     COMPLETED = 'completed',
-    ERROR = 'error'
+    ERROR = 'error',
 }
 
 export class PreloadResource {
@@ -40,21 +40,23 @@ export class PreloadResource {
 
         // 获取资源大小
         this.sizeRetriver = fetch(this.url, {
-            method: 'HEAD'
-        }).then(response => {
-            if (!response.ok) {
-                throw new Error('资源加载失败')
-            }
-
-            let contentLength = response.headers.get('Content-Length')
-            if (contentLength && !isNaN(parseInt(contentLength))) {
-                this.size = parseInt(contentLength)
-            }
-        }).catch(error => {
-            console.error(error)
-            throw new Error('资源加载失败')
+            method: 'HEAD',
         })
-    
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('资源加载失败')
+                }
+
+                let contentLength = response.headers.get('Content-Length')
+                if (contentLength && !isNaN(parseInt(contentLength))) {
+                    this.size = parseInt(contentLength)
+                }
+            })
+            .catch(error => {
+                console.error(error)
+                throw new Error('资源加载失败')
+            })
+
         // 判断资源类型
         let extension = this.url.split('.').pop()?.toLowerCase() ?? ''
         switch (extension) {
@@ -127,7 +129,7 @@ export class Preloader {
         this.listeners = {
             progress: [],
             completed: [],
-            error: []
+            error: [],
         }
 
         // resources绑定get方法
@@ -135,10 +137,10 @@ export class Preloader {
             value: this.getResource.bind(this),
             writable: false,
             enumerable: false,
-            configurable: true
+            configurable: true,
         })
     }
-    
+
     // 添加资源
     add(resource: PreloadResource) {
         this.resources.push(resource)
@@ -167,7 +169,7 @@ export class Preloader {
         this.loadedBytes += delta
 
         // 计算进度
-        let progress = Math.floor(this.loadedBytes / this.totalBytes * 100)
+        let progress = Math.floor((this.loadedBytes / this.totalBytes) * 100)
 
         if (progress > this.progress) {
             this.progress = progress
@@ -175,7 +177,7 @@ export class Preloader {
             // 触发事件
             this.dispatchEvent({
                 type: PreloaderEvent.PROGRESS,
-                progress: progress
+                progress: progress,
             })
         }
 
@@ -201,7 +203,7 @@ export class Preloader {
                 break
             default:
                 throw new Error('无效事件类型')
-            }
+        }
     }
 
     // 开始加载
@@ -212,10 +214,12 @@ export class Preloader {
         }
 
         // 等待资源大小获取完成
-        await Promise.all(this.resources.map(resource => resource.getSizeRetriver())).catch(error => {
-            console.error('资源大小获取失败', error)
-            throw error
-        })
+        await Promise.all(this.resources.map(resource => resource.getSizeRetriver())).catch(
+            error => {
+                console.error('资源大小获取失败', error)
+                throw error
+            }
+        )
 
         // 更新totalBytes
         this.totalBytes = this.resources.reduce((total, resource) => total + resource.getSize(), 0)
@@ -237,7 +241,7 @@ export class Preloader {
                 case PreloadResourceType.SPLAT:
                     this.promises.push(this.loadSplat(resource))
                     break
-                    
+
                 default:
                     this.promises.push(this.loadUnknown(resource))
                     break
@@ -255,7 +259,7 @@ export class Preloader {
 
         // 触发事件
         this.dispatchEvent({
-            type: 'completed'
+            type: 'completed',
         })
     }
 
@@ -268,7 +272,7 @@ export class Preloader {
                 reject(error)
                 this.dispatchEvent({
                     type: PreloaderEvent.ERROR,
-                    error: error
+                    error: error,
                 })
                 return
             }
@@ -296,7 +300,7 @@ export class Preloader {
                     reject(err)
                     this.dispatchEvent({
                         type: PreloaderEvent.ERROR,
-                        error: err
+                        error: err,
                     })
                 }
             )
@@ -306,90 +310,92 @@ export class Preloader {
     private loadSplat(resource: PreloadResource): Promise<void> {
         return new Promise((resolve, reject) => {
             fetch(resource.getUrl())
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`)
-                }
-                return response.body
-            })
-            .then(async body => {
-                const reader = body!.getReader()
-                const chunks: Uint8Array[] = []
-            
-                while (true) {
-                    const {done, value} = await reader.read()
-            
-                    if (done) break
-            
-                    let delta = value!.byteLength
-                    this.updateProgress(delta)
-
-                    chunks.push(value!)
-                }
-
-                // 将 chunks 合并为一个 ArrayBuffer
-                let totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
-                let mergedArray = new Uint8Array(totalLength)
-                let offset = 0
-                for (let chunk of chunks) {
-                    mergedArray.set(chunk, offset)
-                    offset += chunk.length
-                }
-
-                // 保存为 ArrayBuffer
-                resource.setData(mergedArray.buffer)
-                resolve()
-            }).catch(error => {
-                console.error('Splat文件加载失败', error)
-                reject(error)
-                this.dispatchEvent({
-                    type: PreloaderEvent.ERROR,
-                    error: error
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`)
+                    }
+                    return response.body
                 })
-            })
+                .then(async body => {
+                    const reader = body!.getReader()
+                    const chunks: Uint8Array[] = []
+
+                    while (true) {
+                        const { done, value } = await reader.read()
+
+                        if (done) break
+
+                        let delta = value!.byteLength
+                        this.updateProgress(delta)
+
+                        chunks.push(value!)
+                    }
+
+                    // 将 chunks 合并为一个 ArrayBuffer
+                    let totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
+                    let mergedArray = new Uint8Array(totalLength)
+                    let offset = 0
+                    for (let chunk of chunks) {
+                        mergedArray.set(chunk, offset)
+                        offset += chunk.length
+                    }
+
+                    // 保存为 ArrayBuffer
+                    resource.setData(mergedArray.buffer)
+                    resolve()
+                })
+                .catch(error => {
+                    console.error('Splat文件加载失败', error)
+                    reject(error)
+                    this.dispatchEvent({
+                        type: PreloaderEvent.ERROR,
+                        error: error,
+                    })
+                })
         })
     }
 
     private loadUnknown(resource: PreloadResource): Promise<void> {
         return new Promise((resolve, reject) => {
             fetch(resource.getUrl())
-            .then(response => response!.body)
-            .then(async body => {
-                const reader = body!.getReader()
-                const chunks: Uint8Array[] = []
-            
-                while (true) {
-                    const {done, value} = await reader.read()
-            
-                    if (done) break
-            
-                    let delta = value!.byteLength
-                    this.updateProgress(delta)
+                .then(response => response!.body)
+                .then(async body => {
+                    const reader = body!.getReader()
+                    const chunks: Uint8Array[] = []
 
-                    chunks.push(value!)
-                }
+                    while (true) {
+                        const { done, value } = await reader.read()
 
-                let totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
-                let mergedArray = new Uint8Array(totalLength)
-                let offset = 0
-                for (let chunk of chunks) {
-                    mergedArray.set(chunk, offset)
-                    offset += chunk.length
-                }
+                        if (done) break
 
-                let data = mergedArray.buffer
-                resource.setData(data)
+                        let delta = value!.byteLength
+                        this.updateProgress(delta)
 
-                resolve()
-            }).catch(error => {
-                console.error('资源加载失败', error)
-                reject()
-                this.dispatchEvent({
-                    type: PreloaderEvent.ERROR,
-                    error: error
+                        chunks.push(value!)
+                    }
+
+                    let totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
+                    let mergedArray = new Uint8Array(totalLength)
+                    let offset = 0
+                    for (let chunk of chunks) {
+                        mergedArray.set(chunk, offset)
+                        offset += chunk.length
+                    }
+
+                    let data = mergedArray.buffer
+                    resource.setData(data)
+
+                    resolve()
                 })
-                throw new Error('资源加载失败')
-            })
+                .catch(error => {
+                    console.error('资源加载失败', error)
+                    reject()
+                    this.dispatchEvent({
+                        type: PreloaderEvent.ERROR,
+                        error: error,
+                    })
+                    throw new Error('资源加载失败')
+                })
         })
     }
 
