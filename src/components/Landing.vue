@@ -48,6 +48,7 @@ type CubeState = {
 }
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const offscreenCanvas = ref<OffscreenCanvas | null>(null)
 
 const PARTICLE_COUNT = 300 // 减少粒子数量
 const PATH_SEGMENTS = 360 // 减少路径段数
@@ -88,7 +89,7 @@ const CUBE_FACES: Array<[number, number, number, number]> = [
 ]
 
 const state = {
-    ctx: null as CanvasRenderingContext2D | null,
+    ctx: null as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null,
     width: 0,
     height: 0,
     path: [] as PathPoint[],
@@ -110,6 +111,7 @@ const state = {
     pulsePhase: 0,
     gridPhase: 0,
     rafId: 0,
+    isOffscreen: false,
 }
 
 const EXPLOSION_DURATION = 1400
@@ -653,6 +655,14 @@ const drawParticles = () => {
     })
 
     ctx.restore()
+    
+    // 如果使用离屏渲染，需要将离屏canvas内容复制到主canvas
+    if (state.isOffscreen && offscreenCanvas.value && canvasRef.value) {
+        const mainCtx = canvasRef.value.getContext('2d')
+        if (mainCtx) {
+            mainCtx.drawImage(offscreenCanvas.value, 0, 0)
+        }
+    }
 }
 
 // 性能优化：降低帧率以减少CPU/GPU负载
@@ -696,12 +706,51 @@ const handleResize = () => {
     state.width = innerWidth
     state.height = innerHeight
     const dpr = devicePixelRatio || 1
-    canvas.width = innerWidth * dpr
-    canvas.height = innerHeight * dpr
-    canvas.style.width = `${innerWidth}px`
-    canvas.style.height = `${innerHeight}px`
-
-    const ctx = canvas.getContext('2d')
+    
+    // 尝试使用离屏渲染
+    let ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null
+    
+    if (typeof OffscreenCanvas !== 'undefined' && canvas.transferControlToOffscreen) {
+        try {
+            // 如果还没有创建离屏canvas，则创建
+            if (!offscreenCanvas.value) {
+                canvas.width = innerWidth * dpr
+                canvas.height = innerHeight * dpr
+                canvas.style.width = `${innerWidth}px`
+                canvas.style.height = `${innerHeight}px`
+                
+                offscreenCanvas.value = canvas.transferControlToOffscreen()
+                ctx = offscreenCanvas.value.getContext('2d', { 
+                    alpha: true,
+                    desynchronized: true // 启用低延迟渲染
+                })
+                state.isOffscreen = true
+            } else {
+                // 已经有离屏canvas，直接调整大小
+                offscreenCanvas.value.width = innerWidth * dpr
+                offscreenCanvas.value.height = innerHeight * dpr
+                ctx = offscreenCanvas.value.getContext('2d')
+            }
+        } catch (e) {
+            console.warn('Failed to use OffscreenCanvas, falling back to regular canvas:', e)
+            // 回退到常规canvas
+            canvas.width = innerWidth * dpr
+            canvas.height = innerHeight * dpr
+            canvas.style.width = `${innerWidth}px`
+            canvas.style.height = `${innerHeight}px`
+            ctx = canvas.getContext('2d')
+            state.isOffscreen = false
+        }
+    } else {
+        // 浏览器不支持OffscreenCanvas，使用常规canvas
+        canvas.width = innerWidth * dpr
+        canvas.height = innerHeight * dpr
+        canvas.style.width = `${innerWidth}px`
+        canvas.style.height = `${innerHeight}px`
+        ctx = canvas.getContext('2d')
+        state.isOffscreen = false
+    }
+    
     if (!ctx) {
         return
     }
