@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
+// 接收外部进度 prop
+const props = defineProps<{
+  externalProgress?: number;
+}>();
+
 const emit = defineEmits<{
   (event: 'complete'): void;
 }>();
@@ -635,9 +640,16 @@ const drawParticles = () => {
 const animate = () => {
   updateCubeState();
   updateParticles();
+  
+  // 使用外部进度或自动增长
   if (loadProgress.value < 100) {
-    loadProgress.value = Math.min(100, loadProgress.value + 0.05);
+    if (props.externalProgress !== undefined) {
+      loadProgress.value = Math.min(100, props.externalProgress);
+    } else {
+      loadProgress.value = Math.min(100, loadProgress.value + 0.05);
+    }
   }
+  
   updateScrambledWord();
   drawParticles();
   state.rafId = requestAnimationFrame(animate);
@@ -776,7 +788,7 @@ onUnmounted(() => {
   inset: 0;
   background: #000;
   overflow: hidden;
-  cursor: none;
+  z-index: 50;
 }
 
 .infinity-canvas {

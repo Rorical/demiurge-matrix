@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { nextTick, onMounted, reactive, ref } from 'vue';
+import { nextTick, onMounted, onUnmounted, reactive, ref } from 'vue';
 import IconChatProcessingOutline from '~icons/mdi/chat-processing-outline';
 import IconSend from '~icons/mdi/send';
 import IconCog from '~icons/mdi/cog';
 import { Agent } from '@/lib/agent';
 import { loadStoredOpenRouterConfig, saveStoredOpenRouterConfig } from '@/lib/openrouter-config';
+import Avatar from '@/avatar/components/Avatar.vue';
+
+// 定义 emits
+const emit = defineEmits<{
+  (e: 'loading', progress: number): void;
+  (e: 'ready'): void;
+}>();
 
 type Sender = 'self' | 'ally';
 type ChatMessage = {
@@ -173,39 +180,70 @@ const handleSettingsSubmit = () => {
   }, 2000);
 };
 
+// Avatar ref
+const avatarRef = ref<InstanceType<typeof Avatar> | null>(null);
+
+// 定时器获取 Avatar 加载进度并向外发送
+let progressInterval: number | undefined;
+
 onMounted(() => {
   const stored = loadStoredOpenRouterConfig();
   if (stored) {
     settingsForm.apiKey = stored.apiKey ?? '';
     settingsForm.model = stored.model ?? settingsForm.model;
   }
+  
+  // 每 100ms 检查一次 Avatar 加载进度
+  progressInterval = window.setInterval(() => {
+    if (avatarRef.value) {
+      const progress = avatarRef.value.getLoadProgress();
+      emit('loading', progress);
+      
+      // 加载完成后停止定时器
+      if (progress >= 100) {
+        clearInterval(progressInterval);
+        emit('ready');
+      }
+    }
+  }, 100);
+});
+
+onUnmounted(() => {
+  if (progressInterval !== undefined) {
+    clearInterval(progressInterval);
+  }
+});
+
+// 暴露 Avatar 引用
+defineExpose({
+  getAvatar: () => avatarRef.value
 });
 </script>
 
 <template>
-  <section
-    class="fixed inset-0 flex items-center justify-center bg-[radial-gradient(circle_at_top,#101018_0%,#050509_50%,#010103_100%)] px-4 text-center text-white"
-    style="font-family: 'Space Grotesk', 'Inter', 'Segoe UI', sans-serif;"
-  >
-    <div
-      class="min-w-[320px] rounded-[24px] border border-white/10 bg-[rgba(5,5,12,0.85)] p-8 backdrop-blur-[16px]"
-    >
-      <p class="mb-1 text-[0.9rem] uppercase tracking-[0.4em] text-white/60">你好，世界</p>
-      <p class="mb-2 text-[2rem] font-light text-white/90">核心通道</p>
-      <p class="text-[1.1rem] text-white/75">在这里继续构建你的故事。</p>
+  <div class="core-root">
+    <!-- Avatar 背景 -->
+    <div class="fixed inset-0 z-0">
+      <Avatar
+        ref="avatarRef"
+        :show-fps="false"
+        :show-loading-progress="true"
+        @ready="() => console.log('Avatar ready')"
+      />
     </div>
-  </section>
+
+    <!-- 按钮层 -->
+    <button
+      class="fixed bottom-6 right-6 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-white/90 text-black shadow-lg shadow-cyan-500/30 transition hover:bg-white"
+      type="button"
+      aria-label="Toggle chat"
+      @click="toggleChat"
+    >
+      <IconChatProcessingOutline v-if="!isChatOpen" class="h-6 w-6" />
+      <span v-else class="text-2xl leading-none">×</span>
+    </button>
   <button
-    class="fixed bottom-6 right-6 flex h-14 w-14 items-center justify-center rounded-full bg-white/90 text-black shadow-lg shadow-cyan-500/30 transition hover:bg-white"
-    type="button"
-    aria-label="Toggle chat"
-    @click="toggleChat"
-  >
-    <IconChatProcessingOutline v-if="!isChatOpen" class="h-6 w-6" />
-    <span v-else class="text-2xl leading-none">×</span>
-  </button>
-  <button
-    class="fixed bottom-24 right-6 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white shadow-lg shadow-cyan-500/30 transition hover:bg-white/20"
+    class="fixed bottom-24 right-6 z-20 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white shadow-lg shadow-cyan-500/30 transition hover:bg-white/20"
     type="button"
     aria-label="Open settings"
     @click="openSettings"
@@ -213,7 +251,7 @@ onMounted(() => {
     <IconCog class="h-6 w-6" />
   </button>
   <div
-    class="fixed right-6 z-20 w-[320px] max-w-[90vw] rounded-3xl border border-white/10 bg-[rgba(5,5,12,0.92)] p-4 text-left text-white shadow-2xl shadow-cyan-500/40 backdrop-blur-[18px] transition-all duration-300"
+    class="fixed right-6 z-30 w-[320px] max-w-[90vw] rounded-3xl border border-white/10 bg-[rgba(5,5,12,0.92)] p-4 text-left text-white shadow-2xl shadow-cyan-500/40 backdrop-blur-[18px] transition-all duration-300"
     :class="[
       isChatOpen ? 'opacity-100 pointer-events-auto translate-y-0 bottom-28' : 'pointer-events-none opacity-0 translate-y-4 bottom-16',
     ]"
@@ -317,5 +355,6 @@ onMounted(() => {
         </div>
       </form>
     </div>
+  </div>
   </div>
 </template>

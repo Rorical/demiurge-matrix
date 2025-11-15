@@ -13,6 +13,17 @@ const curtainPhase = ref<CurtainPhase>('idle');
 const curtainSkipTransition = ref(false);
 let curtainTimer: number | undefined;
 
+// Avatar 加载进度
+const avatarProgress = ref(0);
+
+const handleAvatarLoading = (progress: number) => {
+  avatarProgress.value = progress;
+};
+
+const handleAvatarReady = () => {
+  console.log('Avatar ready, triggering Landing complete');
+};
+
 const handleLandingComplete = () => {
   curtainSkipTransition.value = true;
   curtainPhase.value = 'hold';
@@ -44,9 +55,22 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-root">
-    <Landing v-if="!showNextSection" @complete="handleLandingComplete" />
-    <Core v-else />
+    <!-- Core 始终渲染，为了加载 Avatar -->
+    <Core 
+      v-show="true"
+      @loading="handleAvatarLoading"
+      @ready="handleAvatarReady"
+    />
+    
+    <!-- Landing 遮罩层，加载完成后消失 -->
+    <Landing 
+      v-if="!showNextSection" 
+      :external-progress="avatarProgress"
+      @complete="handleLandingComplete" 
+    />
+    
     <PointerOverlay />
+    
     <div
       class="white-curtain"
       :class="{
