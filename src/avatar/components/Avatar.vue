@@ -165,7 +165,7 @@ let skysphere: THREE.Mesh | null = null
 let isPaused = false // 是否暂停渲染
 
 // 背景渲染相关
-const INITIAL_RENDER_FRAME_COUNT = 60 // 初始强制渲染帧数
+const INITIAL_RENDER_FRAME_COUNT = 90 // 初始强制渲染帧数
 const LOW_PERFORMANCE_FPS_THRESHOLD = 30
 const LOW_RESOLUTION_SCALE_FACTOR = 0.25
 let backgroundScene: THREE.Scene | null = null // 背景场景（GaussianSplat + 天空球）
@@ -200,7 +200,6 @@ preloader.bindGLTFLoader(loader)
 const RESOURCE_LOADING_WEIGHT = 0.9 // 资源加载占90%
 const SCENE_RENDERING_WEIGHT = 0.05 // 场景渲染占5%
 const FORCE_WAIT_WEIGHT = 0.05 // 强制等待占5%
-const FORCE_WAIT_DURATION = 1000 // 强制等待1秒
 
 let resourceProgress = 0 // 资源加载进度 (0-100)
 let sceneRenderingProgress = 0 // 场景渲染进度 (0-100)
@@ -220,10 +219,20 @@ function calculateTotalProgress(): number {
 // 更新总体进度并触发事件
 function updateTotalProgress() {
     const totalProgress = calculateTotalProgress()
+
     // 只在进度真正增加时才更新
     if (totalProgress > preloadProgress.value) {
         preloadProgress.value = totalProgress
         emit('loading', totalProgress)
+    }
+
+    if (totalProgress >= 100) {
+        // 所有加载完成
+        isLoading.value = false
+        preloadProgress.value = 100
+
+        emit('loaded')
+        emit('ready')
     }
 }
 
@@ -238,52 +247,119 @@ preloader.on(PreloaderEvent.PROGRESS, (progress: any) => {
     }
 })
 
+function startForceWait() {
+    const updateWaitProgress = () => {
+        forceWaitProgress = Math.min(100, (initialRenderFrames / INITIAL_RENDER_FRAME_COUNT) * 100)
+        updateTotalProgress()
+
+        if (forceWaitProgress < 100) {
+            requestAnimationFrame(updateWaitProgress)
+        }
+    }
+
+    updateWaitProgress()
+}
+
 // 监听资源加载完成
 preloader.on(PreloaderEvent.COMPLETED, (resources: any) => {
     // 资源加载完成，恢复渲染
     isPaused = false
 
-    const model = resources.getByName('model').data
-    const modelVrm = model.userData.vrm
-    const idleAnimation = resources.getByName('idle_animation').data.userData.vrmAnimations[0]
+    requestAnimationFrame(async () => {
+        const model = resources.getByName('model').data
+        const modelVrm = model.userData.vrm
+        const idleAnimation = resources.getByName('idle_animation').data.userData.vrmAnimations[0]
 
-    // 优化模型
-    VRMUtils.removeUnnecessaryVertices(modelVrm.scene)
-    VRMUtils.combineSkeletons(modelVrm.scene)
+        // 优化模型
+        VRMUtils.removeUnnecessaryVertices(modelVrm.scene)
+        VRMUtils.combineSkeletons(modelVrm.scene)
 
-    // VRM 0.x 用的是左手坐标系,需要旋转
-    if (modelVrm.meta.metaVersion == '0') {
-        VRMUtils.rotateVRM0(modelVrm)
-    }
+        // VRM 0.x 用的是左手坐标系,需要旋转
+        if (modelVrm.meta.metaVersion == '0') {
+            VRMUtils.rotateVRM0(modelVrm)
+        }
 
-    // 使用VrmController设置VRM模型
-    vrmController.setVRM(modelVrm)
+        // 使用VrmController设置VRM模型
+        vrmController.setVRM(modelVrm)
 
-    // 保存VRM引用，用于位置控制
-    vrmModel = modelVrm
+        // 保存VRM引用，用于位置控制
+        vrmModel = modelVrm
 
-    // 初始化 VRM 位置（只设置一次）
-    vrmModel.scene.position.set(vrmPosition.value.x, vrmPosition.value.y, vrmPosition.value.z)
-    vrmModel.scene.rotation.set(
-        (vrmRotation.value.x * Math.PI) / 180,
-        (vrmRotation.value.y * Math.PI) / 180,
-        (vrmRotation.value.z * Math.PI) / 180
-    )
-    vrmModel.scene.scale.setScalar(vrmScale.value)
+        // 初始化 VRM 位置（只设置一次）
+        vrmModel.scene.position.set(vrmPosition.value.x, vrmPosition.value.y, vrmPosition.value.z)
+        vrmModel.scene.rotation.set(
+            (vrmRotation.value.x * Math.PI) / 180,
+            (vrmRotation.value.y * Math.PI) / 180,
+            (vrmRotation.value.z * Math.PI) / 180
+        )
+        vrmModel.scene.scale.setScalar(vrmScale.value)
 
-    // 注册并播放动画
-    vrmController.registerVRMAnimation('idle', idleAnimation)
-    vrmController.playAction('idle', {
-        loop: true,
-        resetSpringBones: false,
+        // 注册并播放动画
+        vrmController.registerVRMAnimation('idle', idleAnimation)
+        vrmController.playAction('idle', {
+            loop: true,
+            resetSpringBones: false,
+        })
+
+        // Gaussian Splat 场景加载阶段
+        try {
+            // 获取预加载的 splat 数据
+            const splatResource = resources.getByName('splat_scene')
+            const splatData = splatResource.getData()
+
+            // 将 ArrayBuffer 转为 Blob，然后创建 blob URL
+            const blob = new Blob([splatData], { type: 'application/octet-stream' })
+            const blobUrl = URL.createObjectURL(blob)
+
+            // 使用 blob URL 加载场景，显式指定格式（.splat）
+            await viewer.addSplatScenes(
+                [
+                    {
+                        path: blobUrl,
+                        format: GaussianSplats3D.SceneFormat.Splat, // 显式指定格式
+                        splatAlphaRemovalThreshold: props.splatAlphaRemovalThreshold,
+                        scale: props.splatScale,
+                        position: props.splatPosition,
+                    },
+                ],
+                false // 设置为 false 禁用 GaussianSplats3D 的内置加载UI
+            )
+
+            // 使用完 blob URL 后释放
+            URL.revokeObjectURL(blobUrl)
+
+            setTimeout(() => {
+                // 添加VRM到场景
+                vrmScene?.add(modelVrm.scene)
+                sceneRenderingProgress = 50
+                emit('vrmLoaded', modelVrm)
+
+                setTimeout(() => {
+                    // 将viewer添加到背景场景中
+                    if (backgroundScene) {
+                        backgroundScene.add(viewer)
+                    }
+
+                    // 初始渲染一次背景
+                    needUpdateBackground = true
+
+                    // 开始动画循环
+                    animate()
+
+                    emit('splatLoaded')
+
+                    sceneRenderingProgress = 100
+
+                    startForceWait()
+                }, 0)
+            }, 0)
+        } catch (error: any) {
+            console.error('Failed to load Gaussian Splat scene:', error)
+            isLoading.value = false
+            errorMessage.value = `加载失败: ${error.message}`
+            emit('error', error)
+        }
     })
-
-    // 添加到场景
-    if (vrmScene) {
-        vrmScene.add(modelVrm.scene)
-    }
-
-    emit('vrmLoaded', modelVrm)
 })
 
 // 添加预加载资源
@@ -297,6 +373,7 @@ const clock = new THREE.Clock()
 clock.start()
 
 // FPS 计算
+const fpsUpdateInterval = 0.25
 let frameCount = 0
 let fpsUpdateTime = 0
 
@@ -398,12 +475,37 @@ function createRenderTarget(w: number, h: number) {
 
 function checkLowFPS(currentFps: number) {
     // 在高斯泼溅渲染阶段过半后再检测低帧率
-    if (initialRenderFrames > (INITIAL_RENDER_FRAME_COUNT - 10) && !lowResolutionMode && currentFps < LOW_PERFORMANCE_FPS_THRESHOLD) {
+    if (initialRenderFrames > (INITIAL_RENDER_FRAME_COUNT - 20) && !lowResolutionMode && currentFps < LOW_PERFORMANCE_FPS_THRESHOLD) {
         // 切换到低分辨率模式
         lowResolutionMode = true
         setLowResolutionRenderTarget()
         initialRenderFrames = 0 // 重置初始渲染帧数计数器
         console.log('[Avatar] Low FPS detected: ', currentFps)
+
+        // 记录设备低性能标记
+        try {
+            const rendererInfo = getRendererInfo()
+
+            if (rendererInfo) {
+                localStorage.setItem('low_performance_device', rendererInfo)
+            }
+        } catch (e) {
+            // ignore localStorage errors (e.g. private mode)
+        }
+    }
+}
+
+function getRendererInfo(): string | null {
+    if (!renderer) return 'unknown'
+
+    const gl = renderer.getContext()
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info')
+    if (debugInfo) {
+        const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL)
+        const rendererInfo = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
+        return `${vendor} - ${rendererInfo}`
+    } else {
+        return null
     }
 }
 
@@ -421,11 +523,19 @@ const updateBackgroundTexture = () => {
     }
 }
 
-function setLowResolutionRenderTarget() {
-    if (!renderer) return
+function getLowResolutionDimensions() {
+    if (!renderer) return { width: 0, height: 0 }
 
     const w = Math.floor(window.innerWidth * window.devicePixelRatio * LOW_RESOLUTION_SCALE_FACTOR)
     const h = Math.floor(window.innerHeight * window.devicePixelRatio * LOW_RESOLUTION_SCALE_FACTOR)
+
+    return { width: w, height: h }
+}
+
+function setLowResolutionRenderTarget() {
+    if (!renderer) return
+
+    const { width: w, height: h } = getLowResolutionDimensions()
 
     if (backgroundRenderTarget) {
         backgroundRenderTarget.dispose()
@@ -453,10 +563,10 @@ function animate() {
         // 更新 FPS
         frameCount++
         fpsUpdateTime += delta
-        if (fpsUpdateTime >= 1) {
+        if (fpsUpdateTime >= fpsUpdateInterval) {
             fps.value = Math.ceil(frameCount / fpsUpdateTime)
             frameCount = 0
-            fpsUpdateTime -= 1 // 保留超出1秒的部分，保持计算连续性
+            fpsUpdateTime -= fpsUpdateInterval // 保留超出间隔的部分，保持计算连续性
 
             // 性能检测
             checkLowFPS(fps.value)
@@ -599,10 +709,24 @@ onMounted(async () => {
         renderer.setPixelRatio(window.devicePixelRatio)
 
         // 2. 创建 RenderTarget 用于背景渲染
-        backgroundRenderTarget = createRenderTarget(
-            width * window.devicePixelRatio,
-            height * window.devicePixelRatio
-        )
+        const rendererInfo = getRendererInfo()
+        if (rendererInfo) {
+            // 检查 localStorage 中是否有低性能设备标记
+            const lowPerfFlag = localStorage.getItem('low_performance_device')
+            if (lowPerfFlag && rendererInfo === lowPerfFlag) {
+                lowResolutionMode = true
+            }
+        }
+
+        if (lowResolutionMode) {
+            const { width: w, height: h } = getLowResolutionDimensions()
+            backgroundRenderTarget = createRenderTarget(w, h)
+        } else {
+            backgroundRenderTarget = createRenderTarget(
+                width * window.devicePixelRatio,
+                height * window.devicePixelRatio
+            )
+        }
 
         // 3. 创建背景场景（GaussianSplat + 天空球）
         backgroundScene = new THREE.Scene()
@@ -791,98 +915,6 @@ onMounted(async () => {
             // 使用 Instant 模式禁用渐进式加载，确保场景立即完整显示
             sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
         })
-
-        // 10. 等待预加载完成，然后使用预加载的数据
-        preloader.on(PreloaderEvent.COMPLETED, async (resources: any) => {
-            try {
-                // 获取预加载的 splat 数据
-                const splatResource = resources.getByName('splat_scene')
-                const splatData = splatResource.getData()
-
-                // 将 ArrayBuffer 转为 Blob，然后创建 blob URL
-                const blob = new Blob([splatData], { type: 'application/octet-stream' })
-                const blobUrl = URL.createObjectURL(blob)
-
-                // 使用 blob URL 加载场景，显式指定格式（.splat）
-                await viewer.addSplatScenes(
-                    [
-                        {
-                            path: blobUrl,
-                            format: GaussianSplats3D.SceneFormat.Splat, // 显式指定格式
-                            splatAlphaRemovalThreshold: props.splatAlphaRemovalThreshold,
-                            scale: props.splatScale,
-                            position: props.splatPosition,
-                        },
-                    ],
-                    false // 设置为 false 禁用 GaussianSplats3D 的内置加载UI
-                )
-
-                // 使用完 blob URL 后释放
-                URL.revokeObjectURL(blobUrl)
-
-                // 将viewer添加到背景场景中
-                if (backgroundScene) {
-                    backgroundScene.add(viewer)
-                }
-
-                // 初始渲染一次背景
-                needUpdateBackground = true
-
-                // 开始动画循环
-                animate()
-
-                emit('splatLoaded')
-
-                // ===== 场景渲染阶段 (5%) =====
-                // 等待场景初始渲染完成
-                const renderStartTime = Date.now()
-                const renderDuration = 100 // 100ms 用于场景渲染
-
-                const updateRenderProgress = () => {
-                    const elapsed = Date.now() - renderStartTime
-                    sceneRenderingProgress = Math.min(100, (elapsed / renderDuration) * 100)
-                    updateTotalProgress()
-
-                    if (sceneRenderingProgress < 100) {
-                        requestAnimationFrame(updateRenderProgress)
-                    } else {
-                        // 场景渲染完成，进入强制等待阶段
-                        startForceWait()
-                    }
-                }
-
-                updateRenderProgress()
-            } catch (error: any) {
-                console.error('Failed to load Gaussian Splat scene:', error)
-                isLoading.value = false
-                errorMessage.value = `加载失败: ${error.message}`
-                emit('error', error)
-            }
-        })
-
-        // ===== 强制等待阶段 (5%) =====
-        const startForceWait = () => {
-            const waitStartTime = Date.now()
-
-            const updateWaitProgress = () => {
-                const elapsed = Date.now() - waitStartTime
-                forceWaitProgress = Math.min(100, (elapsed / FORCE_WAIT_DURATION) * 100)
-                updateTotalProgress()
-
-                if (forceWaitProgress < 100) {
-                    requestAnimationFrame(updateWaitProgress)
-                } else {
-                    // 所有加载完成
-                    isLoading.value = false
-                    preloadProgress.value = 100
-
-                    emit('loaded')
-                    emit('ready')
-                }
-            }
-
-            updateWaitProgress()
-        }
 
         // 监听窗口变化
         window.addEventListener('resize', onWindowResize)

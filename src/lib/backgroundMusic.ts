@@ -85,8 +85,7 @@ export class BackgroundMusicController {
         } catch (error) {
             this.currentPlayPromise = null
             if (error instanceof Error && error.name === 'NotAllowedError') {
-                console.warn('Autoplay blocked, waiting for user interaction')
-                return false
+                throw error
             }
             console.warn('Failed to play audio:', error)
             return false

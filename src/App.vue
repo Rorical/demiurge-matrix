@@ -72,7 +72,9 @@ const handleUserInteraction = async () => {
             await bgMusic.fadeIn(2000)
         }
     } catch (error) {
-        console.warn('Failed to start background music:', error)
+        if (error instanceof Error && error.name !== 'NotAllowedError') {
+            console.warn('Failed to start background music:', error)
+        }
         hasUserInteracted.value = false
         return
     }
