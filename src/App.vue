@@ -19,7 +19,6 @@ const avatarProgress = ref(0)
 const coreRef = ref<InstanceType<typeof Core> | null>(null)
 
 const handleAvatarLoading = (progress: number) => {
-    console.log(`[App] Avatar loading progress: ${progress.toFixed(2)}%`)
     avatarProgress.value = progress
 }
 
