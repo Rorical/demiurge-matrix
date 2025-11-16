@@ -26,6 +26,8 @@ const state = {
         active: false,
     },
     pulsePhase: 0,
+    fadeOut: false,
+    fadeAlpha: 1,
 }
 
 const pushTrailPoint = (x: number, y: number) => {
@@ -152,13 +154,26 @@ const draw = () => {
     }
     const ctx = state.ctx
     ctx.clearRect(0, 0, state.width, state.height)
+    ctx.save()
+    if (state.fadeOut) {
+        ctx.globalAlpha = state.fadeAlpha
+    }
     drawTrail()
     drawCursor()
+    ctx.restore()
 }
 
 const animate = () => {
     state.pulsePhase += 0.01
     updateTrail()
+    if (state.fadeOut) {
+        state.fadeAlpha -= 0.04
+        if (state.fadeAlpha <= 0) {
+            state.fadeAlpha = 0
+            state.fadeOut = false
+            state.trail = []
+        }
+    }
     draw()
     state.rafId = window.requestAnimationFrame(animate)
 }
@@ -168,10 +183,26 @@ const handlePointerMove = (event: PointerEvent) => {
     state.pointer.y = event.clientY
     state.pointer.active = true
     pushTrailPoint(event.clientX, event.clientY)
+    if (state.fadeOut) {
+        state.fadeOut = false
+        state.fadeAlpha = 1
+    }
 }
 
 const handlePointerLeave = () => {
     state.pointer.active = false
+    if (window.matchMedia('(pointer: coarse)').matches) {
+        state.fadeOut = true
+        state.fadeAlpha = 1
+    }
+}
+
+const handleTouchEnd = () => {
+    state.pointer.active = false
+    if (window.matchMedia('(pointer: coarse)').matches) {
+        state.fadeOut = true
+        state.fadeAlpha = 1
+    }
 }
 
 const handleResize = () => {
@@ -202,6 +233,7 @@ onMounted(() => {
     window.addEventListener('resize', handleResize)
     window.addEventListener('pointermove', handlePointerMove, { passive: true })
     window.addEventListener('pointerleave', handlePointerLeave)
+    window.addEventListener('touchend', handleTouchEnd)
     state.rafId = window.requestAnimationFrame(animate)
 })
 
@@ -210,6 +242,7 @@ onUnmounted(() => {
     window.removeEventListener('resize', handleResize)
     window.removeEventListener('pointermove', handlePointerMove)
     window.removeEventListener('pointerleave', handlePointerLeave)
+    window.removeEventListener('touchend', handleTouchEnd)
 })
 </script>
 
