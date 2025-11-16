@@ -8,6 +8,7 @@ export class BackgroundMusicController {
     private targetVolume = 0.5 // 目标音量（0-1）
     private fadeInterval: number | null = null
     private isInitialized = false
+    private currentPlayPromise: Promise<void> | null = null
 
     constructor(defaultVolume = 0.5) {
         this.targetVolume = defaultVolume
@@ -36,6 +37,21 @@ export class BackgroundMusicController {
             return
         }
 
+        // 等待之前的播放操作完成
+        if (this.currentPlayPromise) {
+            try {
+                await this.currentPlayPromise
+            } catch (error) {
+                // 忽略之前播放的错误
+            }
+            this.currentPlayPromise = null
+        }
+
+        // 先暂停当前播放
+        if (!audio.paused) {
+            audio.pause()
+        }
+
         audio.src = src
         
         try {
@@ -51,11 +67,23 @@ export class BackgroundMusicController {
     async tryPlay(): Promise<boolean> {
         if (!this.audio) return false
 
+        // 等待之前的播放操作完成
+        if (this.currentPlayPromise) {
+            try {
+                await this.currentPlayPromise
+            } catch (error) {
+                // 忽略之前播放的错误
+            }
+        }
+
         try {
-            await this.audio.play()
+            this.currentPlayPromise = this.audio.play()
+            await this.currentPlayPromise
+            this.currentPlayPromise = null
             this.isInitialized = true
             return true
         } catch (error) {
+            this.currentPlayPromise = null
             if (error instanceof Error && error.name === 'NotAllowedError') {
                 console.warn('Autoplay blocked, waiting for user interaction')
                 return false
@@ -167,8 +195,19 @@ export class BackgroundMusicController {
     /**
      * 立即停止播放
      */
-    stop(): void {
+    async stop(): Promise<void> {
         this.stopFade()
+        
+        // 等待之前的播放操作完成
+        if (this.currentPlayPromise) {
+            try {
+                await this.currentPlayPromise
+            } catch (error) {
+                // 忽略之前播放的错误
+            }
+            this.currentPlayPromise = null
+        }
+        
         if (this.audio) {
             this.audio.pause()
             this.audio.currentTime = 0
@@ -186,8 +225,8 @@ export class BackgroundMusicController {
     /**
      * 销毁音频元素
      */
-    destroy(): void {
-        this.stop()
+    async destroy(): Promise<void> {
+        await this.stop()
         if (this.audio) {
             this.audio.src = ''
             this.audio = null

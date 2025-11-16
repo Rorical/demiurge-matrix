@@ -101,7 +101,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     // 清理音乐控制器
-    bgMusic.destroy()
+    bgMusic.destroy().catch(error => {
+        console.warn('Failed to destroy background music:', error)
+    })
     
     // 移除事件监听（如果还未触发）
     document.removeEventListener('click', handleUserInteraction)
