@@ -137,6 +137,15 @@ const isLoading = ref(true)
 const errorMessage = ref('')
 const preloadProgress = ref(0)
 
+// 相机动画配置
+const cameraAnimationConfig = ref({
+    startPosition: { x: -0.54, y: 3.5768, z: 16.6193 },
+    startRotation: { x: -0.0089, y: 0.0534, z: 0.000475 },
+    endPosition: { x: -0.8195507580535983, y: 3.5069401320954166, z: 11.004578157686609 },
+    endRotation: { x: -0.00230984830095552, y: 0.059985882390363364, z: 0.00013847545300307393 },
+    duration: 1400,
+})
+
 // VRM 位置控制（使用响应式引用）
 const vrmPosition = ref({ ...props.vrmPosition })
 const vrmRotation = ref({ ...props.vrmRotation })
@@ -228,8 +237,6 @@ preloader.on(PreloaderEvent.PROGRESS, (progress: any) => {
 
 // 监听资源加载完成
 preloader.on(PreloaderEvent.COMPLETED, (resources: any) => {
-    console.log('VRM Preload completed', resources)
-    
     // 资源加载完成，恢复渲染
     isPaused = false
 
@@ -296,6 +303,9 @@ const cameraState = {
 }
 const cameraMoveThreshold = 0.001 // 位置阈值
 const cameraRotateThreshold = 0.01 // 旋转阈值（弧度）
+
+// 标记是否正在执行相机动画
+let isCameraAnimating = false
 
 /**
  * 检测相机是否移动
@@ -392,8 +402,8 @@ function animate() {
             }
         }
 
-        // 更新控制器
-        if (controls) {
+                // 更新控制器（动画期间跳过，避免控制器干扰相机位置）
+        if (controls && !isCameraAnimating) {
             controls.update()
         }
 
@@ -652,8 +662,17 @@ onMounted(async () => {
             0.1,
             100 // 缩短远裁剪平面，降低渲染距离
         )
-        // 设置默认摄像头位置
-        camera.position.set(props.cameraPosition.x, props.cameraPosition.y, props.cameraPosition.z)
+        // 设置初始摄像头位置和旋转（等待推进动画）
+        camera.position.set(
+            cameraAnimationConfig.value.startPosition.x,
+            cameraAnimationConfig.value.startPosition.y,
+            cameraAnimationConfig.value.startPosition.z
+        )
+        camera.rotation.set(
+            cameraAnimationConfig.value.startRotation.x,
+            cameraAnimationConfig.value.startRotation.y,
+            cameraAnimationConfig.value.startRotation.z
+        )
 
         // 初始化相机状态缓存
         cameraState.position.copy(camera.position)
@@ -892,6 +911,96 @@ onUnmounted(() => {
     camera = null
 })
 
+/**
+ * 相机推进动画
+ * @param duration 动画持续时间（毫秒）
+ */
+const animateCameraZoom = (): Promise<void> => {
+    return new Promise((resolve) => {
+        if (!camera) {
+            resolve()
+            return
+        }
+
+        // 使用配置中的值
+        const startPosition = { ...cameraAnimationConfig.value.startPosition }
+        const startRotation = { ...cameraAnimationConfig.value.startRotation }
+        const targetPosition = { ...cameraAnimationConfig.value.endPosition }
+        const targetRotation = { ...cameraAnimationConfig.value.endRotation }
+
+        // 设置初始位置和旋转
+        camera.position.set(startPosition.x, startPosition.y, startPosition.z)
+        camera.rotation.set(startRotation.x, startRotation.y, startRotation.z)
+
+        // 标记正在执行动画
+        isCameraAnimating = true
+
+        // 禁用控制器
+        const controlsWasEnabled = controls?.enabled ?? false
+        if (controls) {
+            controls.enabled = false
+        }
+
+        const startTime = performance.now()
+
+        // 缓动函数：easeOutCubic
+        const easeOutCubic = (t: number): number => {
+            return 1 - Math.pow(1 - t, 3)
+        }
+
+        const animateStep = () => {
+            if (!camera) {
+                isCameraAnimating = false
+                resolve()
+                return
+            }
+
+            const now = performance.now()
+            const elapsed = now - startTime
+            const progress = Math.min(elapsed / cameraAnimationConfig.value.duration, 1)
+
+            // 应用缓动曲线
+            const easedProgress = easeOutCubic(progress)
+
+            // 插值计算当前位置和旋转（X、Y、Z 三轴都进行平滑过渡）
+            const currentX = startPosition.x + (targetPosition.x - startPosition.x) * easedProgress
+            const currentY = startPosition.y + (targetPosition.y - startPosition.y) * easedProgress
+            const currentZ = startPosition.z + (targetPosition.z - startPosition.z) * easedProgress
+            
+            const currentRotX = startRotation.x + (targetRotation.x - startRotation.x) * easedProgress
+            const currentRotY = startRotation.y + (targetRotation.y - startRotation.y) * easedProgress
+            const currentRotZ = startRotation.z + (targetRotation.z - startRotation.z) * easedProgress
+
+            // 更新相机位置和旋转
+            camera.position.set(currentX, currentY, currentZ)
+            camera.rotation.set(currentRotX, currentRotY, currentRotZ)
+
+            // 标记需要更新背景
+            needUpdateBackground = true
+
+            if (progress < 1) {
+                requestAnimationFrame(animateStep)
+            } else {
+                // 动画完成，确保到达精确的目标位置
+                camera.position.set(targetPosition.x, targetPosition.y, targetPosition.z)
+                camera.rotation.set(targetRotation.x, targetRotation.y, targetRotation.z)
+                
+                // 动画完成
+                isCameraAnimating = false
+                
+                // 恢复控制器
+                if (controls && controlsWasEnabled) {
+                    controls.enabled = true
+                }
+                
+                resolve()
+            }
+        }
+
+        animateStep()
+    })
+}
+
 // 暴露给父组件的方法
 defineExpose({
     getVrmController: () => vrmController,
@@ -911,6 +1020,7 @@ defineExpose({
         needUpdateBackground = true
     },
     getLoadProgress: () => preloadProgress.value,
+    startCameraZoomAnimation: animateCameraZoom,
 })
 </script>
 

@@ -8,6 +8,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (event: 'complete'): void
+    (event: 'explosion-start'): void
 }>()
 
 type PathPoint = {
@@ -114,7 +115,7 @@ const state = {
     isOffscreen: false,
 }
 
-const EXPLOSION_DURATION = 1400
+const EXPLOSION_DURATION = 600
 
 const loadProgress = ref(0)
 const progressPath = ref('')
@@ -248,6 +249,10 @@ const triggerExplosion = () => {
     }
     explosionStage.value = 'expanding'
     loadProgress.value = 100
+    
+    // 爆炸开始时立即 emit 事件
+    emit('explosion-start')
+    
     explosionTimeout = window.setTimeout(() => {
         explosionStage.value = 'complete'
         emit('complete')
@@ -1004,7 +1009,7 @@ onUnmounted(() => {
             0 0 20px rgba(255, 255, 255, 0.8),
             0 0 80px rgba(255, 255, 255, 0.5);
     }
-    45% {
+    50% {
         opacity: 1;
         transform: translate(-50%, -50%) rotate(45deg) scale(3);
         box-shadow:
@@ -1013,7 +1018,7 @@ onUnmounted(() => {
     }
     100% {
         opacity: 1;
-        transform: translate(-50%, -50%) rotate(45deg) scale(35);
+        transform: translate(-50%, -50%) rotate(45deg) scale(20);
         box-shadow: 0 0 120px rgba(255, 255, 255, 1);
     }
 }

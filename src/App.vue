@@ -5,19 +5,12 @@ import Core from './components/Core.vue'
 import PointerOverlay from './components/PointerOverlay.vue'
 import { BackgroundMusicController } from './lib/backgroundMusic'
 
-type CurtainPhase = 'idle' | 'hold' | 'fade'
-const CURTAIN_FADE_DELAY = 0 // 无延迟
-const CURTAIN_FADE_DURATION = 250 // 0.25秒完成白色窗帘过渡
-
 // 背景音乐控制器
 const bgMusic = new BackgroundMusicController(0.4) // 默认音量 40%
 const hasUserInteracted = ref(false)
 const isInCore = ref(false) // 标记是否已经进入 Core 阶段
 
 const showNextSection = ref(false)
-const curtainPhase = ref<CurtainPhase>('idle')
-const curtainSkipTransition = ref(false)
-let curtainTimer: number | undefined
 
 // Avatar 加载进度
 const avatarProgress = ref(0)
@@ -29,24 +22,30 @@ const handleAvatarLoading = (progress: number) => {
     avatarProgress.value = progress
 }
 
+const handleExplosionStart = () => {
+    setTimeout(() => {
+        requestAnimationFrame(() => {
+            // 启动相机推进动画
+            if (coreRef.value && coreRef.value.getAvatar()) {
+                const avatar = coreRef.value.getAvatar()
+                avatar?.resume()
+                
+                avatar?.startCameraZoomAnimation()
+            } else {
+                console.warn('[App] No avatar reference found')
+            }
+        })
+    }, 500)
+}
+
 const handleLandingComplete = () => {
-    curtainSkipTransition.value = true
-    curtainPhase.value = 'hold'
     showNextSection.value = true
     isInCore.value = true // 标记已进入 Core
     
-    if (curtainTimer) {
-        window.clearTimeout(curtainTimer)
+    // Landing 结束，切换音乐（如果已经在播放）
+    if (hasUserInteracted.value) {
+        switchToHomelandMusic()
     }
-    curtainTimer = window.setTimeout(() => {
-        curtainSkipTransition.value = false
-        curtainPhase.value = 'fade'
-        
-        // Landing 结束，切换音乐（如果已经在播放）
-        if (hasUserInteracted.value) {
-            switchToHomelandMusic()
-        }
-    }, CURTAIN_FADE_DELAY)
 }
 
 // 切换到 homeland 音乐
@@ -84,19 +83,6 @@ const handleUserInteraction = async () => {
     document.removeEventListener('touchstart', handleUserInteraction)
 }
 
-const handleCurtainTransitionEnd = (event: TransitionEvent) => {
-    if (event.propertyName !== 'opacity' || event.target !== event.currentTarget) {
-        return
-    }
-    if (curtainPhase.value === 'fade') {
-        curtainPhase.value = 'idle'
-        // 窗帘动画结束后，恢复 Avatar 的渲染
-        if (coreRef.value && coreRef.value.getAvatar()) {
-            coreRef.value.getAvatar()?.resume()
-        }
-    }
-}
-
 // 监听 showNextSection 变化，当 Landing 消失时恢复 Avatar 渲染
 watch(showNextSection, (value) => {
     if (value && coreRef.value && coreRef.value.getAvatar()) {
@@ -114,10 +100,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-    if (curtainTimer) {
-        window.clearTimeout(curtainTimer)
-    }
-    
     // 清理音乐控制器
     bgMusic.destroy()
     
@@ -143,6 +125,7 @@ onBeforeUnmount(() => {
             <Landing
                 v-if="!showNextSection"
                 :external-progress="avatarProgress"
+                @explosion-start="handleExplosionStart"
                 @complete="handleLandingComplete"
             />
         </Transition>
@@ -168,16 +151,7 @@ onBeforeUnmount(() => {
             </div>
         </Transition>
 
-        <div
-            class="white-curtain"
-            :class="{
-                'white-curtain--hold': curtainPhase === 'hold',
-                'white-curtain--fade': curtainPhase === 'fade',
-                'white-curtain--no-transition': curtainSkipTransition,
-            }"
-            :style="{ '--curtain-duration': `${CURTAIN_FADE_DURATION}ms` }"
-            @transitionend="handleCurtainTransitionEnd"
-        ></div>
+        <PointerOverlay />
     </div>
 </template>
 
@@ -188,28 +162,6 @@ onBeforeUnmount(() => {
 
 .app-root {
     position: relative;
-}
-
-.white-curtain {
-    position: fixed;
-    inset: 0;
-    background: #fff;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--curtain-duration, 1.4s) cubic-bezier(0.2, 0.8, 0.2, 1);
-    z-index: 30;
-}
-
-.white-curtain--hold {
-    opacity: 1;
-}
-
-.white-curtain--fade {
-    opacity: 0;
-}
-
-.white-curtain--no-transition {
-    transition: none !important;
 }
 
 /* Landing 淡出过渡 */
@@ -277,11 +229,11 @@ onBeforeUnmount(() => {
 }
 
 .music-hint-fade-enter-active {
-    transition: opacity 0.8s ease-out 1s;
+    transition: opacity 0.4s ease-out;
 }
 
 .music-hint-fade-leave-active {
-    transition: opacity 0.4s ease-out;
+    transition: opacity 0.4s ease-out 0.2s;
 }
 
 .music-hint-fade-enter-from,
