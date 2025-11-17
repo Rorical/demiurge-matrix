@@ -23,7 +23,7 @@ import { VRMLookAtSmootherLoaderPlugin } from '@/avatar/libs/VRMLookAtSmootherLo
 import { Preloader, PreloadResource, PreloaderEvent } from '@/avatar/utils/Preloader'
 import { VrmController } from '@/avatar/utils/VrmController'
 // @ts-ignore - GaussianSplats3D doesn't have type definitions
-import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
+import * as GaussianSplats3D from '@/avatar/libs/GaussianSplats3D'
 
 // Props 定义
 interface Props {
@@ -179,6 +179,10 @@ let gaussianSplatReady = false // GaussianSplat3D 是否已准备好（从 viewe
 let lowResolutionMode = false // 是否处于低分辨率模式
 let lowPerformanceFpsCounter = 0 // 低性能 FPS 计数器
 
+// 材质缓存
+let skyMaterial: THREE.ShaderMaterial | null = null
+let backgroundMaterial: THREE.ShaderMaterial | null = null
+
 // VRM 引用
 let vrmModel: any = null
 
@@ -330,31 +334,27 @@ preloader.on(PreloaderEvent.COMPLETED, (resources: any) => {
             // 使用完 blob URL 后释放
             URL.revokeObjectURL(blobUrl)
 
-            setTimeout(() => {
-                // 添加VRM到场景
-                vrmScene?.add(modelVrm.scene)
-                sceneRenderingProgress = 50
-                emit('vrmLoaded', modelVrm)
+            // 添加VRM到场景
+            vrmScene?.add(modelVrm.scene)
+            sceneRenderingProgress = 50
+            emit('vrmLoaded', modelVrm)
 
-                setTimeout(() => {
-                    // 将viewer添加到背景场景中
-                    if (backgroundScene) {
-                        backgroundScene.add(viewer)
-                    }
+            // 将viewer添加到背景场景中
+            if (backgroundScene) {
+                backgroundScene.add(viewer)
+            }
 
-                    // 初始渲染一次背景
-                    needUpdateBackground = true
+            // 初始渲染一次背景
+            needUpdateBackground = true
 
-                    // 开始动画循环
-                    animate()
+            // 开始动画循环
+            animate()
 
-                    emit('splatLoaded')
+            emit('splatLoaded')
 
-                    sceneRenderingProgress = 100
+            sceneRenderingProgress = 100
 
-                    startForceWait()
-                }, 0)
-            }, 0)
+            startForceWait()
         } catch (error: any) {
             console.error('Failed to load Gaussian Splat scene:', error)
             isLoading.value = false
@@ -708,6 +708,9 @@ onMounted(async () => {
             antialias: props.antialias,
         })
 
+        // 禁用WebGLRenderer的checkShaderErrors以提升性能
+        renderer.debug.checkShaderErrors = false
+
         // 使用 window 尺寸确保准确性
         const width = window.innerWidth
         const height = window.innerHeight
@@ -740,67 +743,70 @@ onMounted(async () => {
         // 创建天空球（半径调整为80，在远裁剪平面内）
         const skyGeometry = new THREE.SphereGeometry(80, 64, 64)
 
-        // 创建渐变材质的顶点着色器
-        const skyVertexShader = `
-            varying vec3 vWorldPosition;
-            void main() {
-                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-                vWorldPosition = worldPosition.xyz;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            }
-        `
-
-        // 创建渐变材质的片段着色器
-        const skyFragmentShader = `
-            uniform vec3 bottomColor;
-            uniform vec3 color1;
-            uniform vec3 color2;
-            uniform vec3 color3;
-            uniform vec3 topColor;
-            varying vec3 vWorldPosition;
-            
-            void main() {
-                // 归一化y坐标 (-1 到 1)
-                float h = normalize(vWorldPosition).y;
-                
-                vec3 color;
-                
-                if (h < -0.2) {
-                    // 底部50%: 纯色 5a829b
-                    color = bottomColor;
-                } else if (h < 0.14) {
-                    // 0% - 7%: fff2c5 到 eec6ad
-                    float t = h / 0.14;
-                    color = mix(color1, color2, t);
-                } else if (h < 0.5) {
-                    // 7% - 25%: eec6ad 到 8c9f9e
-                    float t = (h - 0.14) / 0.36;
-                    color = mix(color2, color3, t);
-                } else if (h < 1.0) {
-                    // 25% - 50%: 8c9f9e 到 53768a
-                    float t = (h - 0.5) / 0.5;
-                    color = mix(color3, topColor, t);
-                } else {
-                    color = topColor;
+        // 复用或创建天空球材质
+        if (!skyMaterial) {
+            // 创建渐变材质的顶点着色器
+            const skyVertexShader = `
+                varying vec3 vWorldPosition;
+                void main() {
+                    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                    vWorldPosition = worldPosition.xyz;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
                 }
-                
-                gl_FragColor = vec4(color, 1.0);
-            }
-        `
+            `
 
-        const skyMaterial = new THREE.ShaderMaterial({
-            vertexShader: skyVertexShader,
-            fragmentShader: skyFragmentShader,
-            uniforms: {
-                bottomColor: { value: new THREE.Color(props.skyColors.bottom) },
-                color1: { value: new THREE.Color(props.skyColors.color1) },
-                color2: { value: new THREE.Color(props.skyColors.color2) },
-                color3: { value: new THREE.Color(props.skyColors.color3) },
-                topColor: { value: new THREE.Color(props.skyColors.top) },
-            },
-            side: THREE.BackSide, // 从内部看
-            depthWrite: false,
-        })
+            // 创建渐变材质的片段着色器
+            const skyFragmentShader = `
+                uniform vec3 bottomColor;
+                uniform vec3 color1;
+                uniform vec3 color2;
+                uniform vec3 color3;
+                uniform vec3 topColor;
+                varying vec3 vWorldPosition;
+                
+                void main() {
+                    // 归一化y坐标 (-1 到 1)
+                    float h = normalize(vWorldPosition).y;
+                    
+                    vec3 color;
+                    
+                    if (h < -0.2) {
+                        // 底部50%: 纯色 5a829b
+                        color = bottomColor;
+                    } else if (h < 0.14) {
+                        // 0% - 7%: fff2c5 到 eec6ad
+                        float t = h / 0.14;
+                        color = mix(color1, color2, t);
+                    } else if (h < 0.5) {
+                        // 7% - 25%: eec6ad 到 8c9f9e
+                        float t = (h - 0.14) / 0.36;
+                        color = mix(color2, color3, t);
+                    } else if (h < 1.0) {
+                        // 25% - 50%: 8c9f9e 到 53768a
+                        float t = (h - 0.5) / 0.5;
+                        color = mix(color3, topColor, t);
+                    } else {
+                        color = topColor;
+                    }
+                    
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `
+
+            skyMaterial = new THREE.ShaderMaterial({
+                vertexShader: skyVertexShader,
+                fragmentShader: skyFragmentShader,
+                uniforms: {
+                    bottomColor: { value: new THREE.Color(props.skyColors.bottom) },
+                    color1: { value: new THREE.Color(props.skyColors.color1) },
+                    color2: { value: new THREE.Color(props.skyColors.color2) },
+                    color3: { value: new THREE.Color(props.skyColors.color3) },
+                    topColor: { value: new THREE.Color(props.skyColors.top) },
+                },
+                side: THREE.BackSide, // 从内部看
+                depthWrite: false,
+            })
+        }
 
         skysphere = new THREE.Mesh(skyGeometry, skyMaterial)
         skysphere.renderOrder = -1 // 最先渲染（背景）
@@ -814,30 +820,33 @@ onMounted(async () => {
         // 4. 创建 VRM 场景
         vrmScene = new THREE.Scene()
 
+        // 复用或创建背景平面材质
+        if (!backgroundMaterial) {
+            backgroundMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    tBackground: { value: backgroundRenderTarget.texture },
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform sampler2D tBackground;
+                    varying vec2 vUv;
+                    void main() {
+                        gl_FragColor = texture2D(tBackground, vUv);
+                    }
+                `,
+                depthTest: false,
+                depthWrite: false,
+            })
+        }
+
         // 创建一个全屏平面来显示背景纹理
         const backgroundGeometry = new THREE.PlaneGeometry(2, 2)
-        const backgroundMaterial = new THREE.ShaderMaterial({
-            uniforms: {
-                tBackground: { value: backgroundRenderTarget.texture },
-            },
-            vertexShader: `
-                varying vec2 vUv;
-                void main() {
-                    vUv = uv;
-                    gl_Position = vec4(position, 1.0);
-                }
-            `,
-            fragmentShader: `
-                uniform sampler2D tBackground;
-                varying vec2 vUv;
-                void main() {
-                    gl_FragColor = texture2D(tBackground, vUv);
-                }
-            `,
-            depthTest: false,
-            depthWrite: false,
-        })
-
         backgroundPlane = new THREE.Mesh(backgroundGeometry, backgroundMaterial)
         backgroundPlane.renderOrder = -1000 // 最先渲染
         backgroundPlane.frustumCulled = false
@@ -962,7 +971,6 @@ onUnmounted(() => {
     // 清理背景平面
     if (backgroundPlane) {
         if (backgroundPlane.geometry) backgroundPlane.geometry.dispose()
-        if (backgroundPlane.material) (backgroundPlane.material as THREE.Material).dispose()
         backgroundPlane = null
     }
 
@@ -975,7 +983,6 @@ onUnmounted(() => {
     // 清理天空球
     if (skysphere) {
         if (skysphere.geometry) skysphere.geometry.dispose()
-        if (skysphere.material) (skysphere.material as THREE.Material).dispose()
         skysphere = null
     }
 
