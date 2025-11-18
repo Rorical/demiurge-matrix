@@ -271,9 +271,8 @@ watch(loadProgress, value => {
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
 const buildPath = (width: number, height: number) => {
-    const margin = Math.max(96, width * 0.12)
-    const availableWidth = width - margin * 2
-    const availableHeight = height - margin * 2
+    const availableWidth = width - Math.max(96, width * 0.12) * 2
+    const availableHeight = height - Math.max(48, width * 0.02) * 2
     const scaleY = Math.min(availableWidth, availableHeight) * 0.5
     const scaleX = scaleY * 1.1
     const centerX = width / 2
