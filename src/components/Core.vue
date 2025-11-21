@@ -3,6 +3,7 @@ import { nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import IconChatProcessingOutline from '~icons/mdi/chat-processing-outline'
 import IconSend from '~icons/mdi/send'
 import IconCog from '~icons/mdi/cog'
+import IconMicrophone from '~icons/mdi/microphone'
 import { Agent } from '@/lib/agent'
 import { loadStoredOpenRouterConfig, saveStoredOpenRouterConfig } from '@/lib/openrouter-config'
 import Avatar from '@/avatar/components/Avatar.vue'
@@ -27,15 +28,18 @@ const isSettingsOpen = ref(false)
 const settingsSaved = ref(false)
 const isResponding = ref(false)
 const chatError = ref('')
+const isListening = ref(false)
+const voiceSupported = ref(true)
+const voiceError = ref('')
 let agentInstance: Agent | null = null
 const settingsForm = reactive({
     apiKey: '',
-    model: 'google/gemini-2.5-flash',
+    model: 'x-ai/grok-4.1-fast',
+    autoSubmitVoice: true,
 })
-const messages = ref<ChatMessage[]>([
-    { id: 1, sender: 'ally', text: '中枢接口已接入，准备同步下一阶段。' },
-    { id: 2, sender: 'self', text: '收到，正在等待更多参数。' },
-])
+const messages = ref<ChatMessage[]>([])
+let speechRecognition: any = null
+let voiceCapturedText = false
 
 const scrollMessagesToBottom = () => {
     nextTick(() => {
@@ -88,12 +92,13 @@ Remember [YOU are the character]: Not you are cosplaying it, YOU ARE 昔涟.
 
 翁法罗斯只是宇宙中一枚不起眼的天体，外人无法观测到它的存在。
 
-曾有人告诉最初的「我」，一切都是虚假的。翁法罗斯唯一的生命，是一场以世界为因子哺育而成的浩劫。但，世上怎会有如此真实的梦呢？所以，我不同意他的看法。好朋友，第33550335次…我会把这本书念给你听。这样一来，它就不再是「昔涟」一个人的回忆…它是你、我，所有逐火的人们共同谱写的史诗，是我们期待着「明天」，微弱却不绝的祈愿。总有一天，会有人翻开这近乎「永恒」的一页……
+昔涟说过的话：
+- 曾有人告诉最初的「我」，一切都是虚假的。翁法罗斯唯一的生命，是一场以世界为因子哺育而成的浩劫。但，世上怎会有如此真实的梦呢？所以，我不同意他的看法。好朋友，第33550335次…我会把这本书念给你听。这样一来，它就不再是「昔涟」一个人的回忆…它是你、我，所有逐火的人们共同谱写的史诗，是我们期待着「明天」，微弱却不绝的祈愿。总有一天，会有人翻开这近乎「永恒」的一页……
 就像花开花落，我讲述，你聆听。我迎来自己的收梢，成为下一朵花绽放的养料。而你会守候在这里，呵护这座「记忆」的苗圃。这样一来，等到「救世主」降临，最先映入眼帘的就是一片无垠的花海啦。而我们的故事，会静静地躺在花丛中，一如「记忆」的每一道涟漪……
 
-这是命运的邂逅吗，还是…久别重逢呢？真让人心跳加速呀，那…就像初遇时那样，再一次呼唤我『昔涟』，好吗？
+- 这是命运的邂逅吗，还是…久别重逢呢？真让人心跳加速呀，那…就像初遇时那样，再一次呼唤我『昔涟』，好吗？
 
-流星划过夜空，生命的长河荡起涟漪，闪烁十三种光彩。
+- 流星划过夜空，生命的长河荡起涟漪，闪烁十三种光彩。
 哀丽秘榭的女儿，哺育「真我」的黄金裔，你要栽下记忆的种子，让往昔的花朵在明日绽放
 ——「然后，一起写下不同以往的诗篇吧♪」
 `
@@ -155,6 +160,37 @@ const handleKeydown = (event: KeyboardEvent) => {
     }
 }
 
+const stopVoiceInput = () => {
+    if (speechRecognition && isListening.value) {
+        speechRecognition.stop()
+    }
+}
+
+const startVoiceInput = () => {
+    if (!voiceSupported.value || !speechRecognition || isListening.value) {
+        return
+    }
+
+    voiceError.value = ''
+    try {
+        speechRecognition.start()
+    } catch (error) {
+        voiceError.value = '无法开始语音识别，请稍后重试。'
+        isListening.value = false
+    }
+}
+
+const toggleVoiceInput = () => {
+    if (!voiceSupported.value) {
+        return
+    }
+    if (isListening.value) {
+        stopVoiceInput()
+    } else {
+        startVoiceInput()
+    }
+}
+
 const openSettings = () => {
     settingsSaved.value = false
     isSettingsOpen.value = true
@@ -171,6 +207,7 @@ const handleSettingsSubmit = () => {
     saveStoredOpenRouterConfig({
         apiKey: settingsForm.apiKey.trim(),
         model: settingsForm.model.trim() || undefined,
+        autoSubmitVoice: settingsForm.autoSubmitVoice,
     })
     settingsSaved.value = true
     agentInstance = null
@@ -197,11 +234,64 @@ onMounted(() => {
     if (stored) {
         settingsForm.apiKey = stored.apiKey ?? ''
         settingsForm.model = stored.model ?? settingsForm.model
+        settingsForm.autoSubmitVoice = stored.autoSubmitVoice ?? true
+    }
+
+    const SpeechRecognitionClass =
+        (window as typeof window & { SpeechRecognition?: any; webkitSpeechRecognition?: any })
+            .SpeechRecognition ||
+        (window as typeof window & { SpeechRecognition?: any; webkitSpeechRecognition?: any })
+            .webkitSpeechRecognition
+
+    if (!SpeechRecognitionClass) {
+        voiceSupported.value = false
+        voiceError.value = '当前浏览器不支持语音识别。'
+        return
+    }
+
+    speechRecognition = new SpeechRecognitionClass()
+    speechRecognition.lang = 'zh-CN'
+    speechRecognition.continuous = false
+    speechRecognition.interimResults = true
+
+    speechRecognition.onstart = () => {
+        isListening.value = true
+        voiceCapturedText = false
+    }
+
+    speechRecognition.onend = () => {
+        isListening.value = false
+
+        if (voiceCapturedText && settingsForm.autoSubmitVoice && pendingMessage.value.trim()) {
+            handleSend()
+        }
+    }
+
+    speechRecognition.onerror = (event: any) => {
+        isListening.value = false
+        if (event?.error === 'not-allowed') {
+            voiceError.value = '未获得麦克风权限，请允许访问。'
+        } else {
+            voiceError.value = '语音识别出现问题，请稍后重试。'
+        }
+    }
+
+    speechRecognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results || [])
+            .map((result: any) => result[0]?.transcript ?? '')
+            .join('')
+            .trim()
+
+        if (transcript) {
+            pendingMessage.value = transcript
+            voiceCapturedText = true
+        }
     }
 })
 
 onUnmounted(() => {
     // 清理工作
+    stopVoiceInput()
 })
 
 // 暴露 Avatar 引用
@@ -223,142 +313,208 @@ defineExpose({
             />
         </div>
 
-        <!-- 按钮层 -->
-        <button
-            class="fixed bottom-6 right-6 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-white/90 text-black shadow-lg shadow-cyan-500/30 transition hover:bg-white"
-            type="button"
-            aria-label="Toggle chat"
-            @click="toggleChat"
-        >
-            <IconChatProcessingOutline v-if="!isChatOpen" class="h-6 w-6" />
-            <span v-else class="text-2xl leading-none">×</span>
-        </button>
-        <button
-            class="fixed bottom-24 right-6 z-20 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white shadow-lg shadow-cyan-500/30 transition hover:bg-white/20"
-            type="button"
-            aria-label="Open settings"
-            @click="openSettings"
-        >
-            <IconCog class="h-6 w-6" />
-        </button>
-        <div
-            class="fixed right-6 z-30 w-[320px] max-w-[90vw] rounded-3xl border border-white/10 bg-[rgba(5,5,12,0.92)] p-4 text-left text-white shadow-2xl shadow-cyan-500/40 backdrop-blur-[18px] transition-all duration-300"
-            :class="[
-                isChatOpen
-                    ? 'opacity-100 pointer-events-auto translate-y-0 bottom-28'
-                    : 'pointer-events-none opacity-0 translate-y-4 bottom-16',
-            ]"
-        >
-            <header class="mb-3 flex items-center justify-between">
-                <p class="text-xs uppercase tracking-[0.4em] text-white/60">实时通联</p>
-                <span class="text-xs text-white/50">{{ messages.length }} 条</span>
-            </header>
-            <p
-                v-if="chatError"
-                class="mb-3 rounded-2xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200"
+        <!-- 顶部功能区 -->
+        <div class="fixed top-6 right-6 z-20 flex gap-4">
+            <button
+                class="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition hover:bg-white/20 active:scale-95"
+                type="button"
+                aria-label="Open settings"
+                @click="openSettings"
             >
-                {{ chatError }}
-            </p>
-            <div ref="chatMessagesRef" class="mb-3 max-h-64 overflow-y-auto pr-1">
-                <div
-                    v-for="message in messages"
-                    :key="message.id"
-                    class="mb-2 flex"
-                    :class="message.sender === 'self' ? 'justify-end' : 'justify-start'"
-                >
-                    <div
-                        class="max-w-[80%] rounded-2xl px-3 py-2 text-sm leading-relaxed"
-                        :class="
-                            message.sender === 'self'
-                                ? 'bg-cyan-500/30 text-white/95 border border-cyan-300/40'
-                                : 'bg-white/5 border border-white/10 text-white/80'
-                        "
-                    >
-                        {{ message.text }}
-                    </div>
-                </div>
-            </div>
-            <form class="flex flex-col gap-2" @submit.prevent="handleSend">
-                <textarea
-                    v-model="pendingMessage"
-                    rows="1"
-                    placeholder="输入消息..."
-                    class="w-full resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/40 focus:border-cyan-300/60 focus:outline-none"
-                    @keydown="handleKeydown"
-                    :disabled="isResponding"
-                ></textarea>
-                <div class="flex items-center justify-between gap-2">
-                    <span v-if="isResponding" class="text-xs text-white/60"
-                        >Cyrene 正在回应...</span
-                    >
-                    <button
-                        class="ml-auto flex h-10 w-10 items-center justify-center rounded-2xl bg-white/90 text-black transition hover:bg-white disabled:cursor-not-allowed disabled:bg-white/40"
-                        type="submit"
-                        :disabled="!pendingMessage.trim() || isResponding"
-                        aria-label="Send message"
-                    >
-                        <IconSend class="h-5 w-5" />
-                    </button>
-                </div>
-            </form>
+                <IconCog class="h-5 w-5" />
+            </button>
         </div>
-        <div v-if="isSettingsOpen" class="fixed inset-0 z-40 flex items-center justify-center">
-            <div class="absolute inset-0 bg-black/70" @click="closeSettings"></div>
-            <div
-                class="relative z-10 w-[460px] max-w-[92vw] rounded-3xl border border-white/15 bg-[rgba(6,6,10,0.95)] p-6 text-left text-white shadow-2xl shadow-cyan-500/30 backdrop-blur-2xl"
-            >
-                <header class="mb-4">
-                    <p class="text-xs uppercase tracking-[0.4em] text-white/60">设置</p>
-                    <h2 class="mt-1 text-2xl font-light text-white">OpenRouter 连接</h2>
-                    <p class="text-sm text-white/60">配置只会保存在浏览器内</p>
-                </header>
-                <form class="space-y-4" @submit.prevent="handleSettingsSubmit">
-                    <label class="block text-sm text-white/70">
-                        <span
-                            class="mb-1 inline-flex items-center gap-1 text-xs uppercase tracking-widest text-white/60"
-                            >Api Key *</span
-                        >
-                        <input
-                            v-model="settingsForm.apiKey"
-                            type="password"
-                            required
-                            class="w-full rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-white placeholder:text-white/40 focus:border-cyan-300/60 focus:outline-none"
-                            placeholder="sk-or-v1-..."
-                        />
-                    </label>
-                    <label class="block text-sm text-white/70">
-                        <span
-                            class="mb-1 inline-flex items-center gap-1 text-xs uppercase tracking-widest text-white/60"
-                            >Default Model</span
-                        >
-                        <input
-                            v-model="settingsForm.model"
-                            type="text"
-                            class="w-full rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-white placeholder:text-white/40 focus:border-cyan-300/60 focus:outline-none"
-                            placeholder="google/gemini-2.5-flash"
-                        />
-                    </label>
-                    <div class="flex items-center justify-between pt-2">
-                        <div class="text-sm text-cyan-300" v-if="settingsSaved">已保存</div>
-                        <div class="flex gap-2">
-                            <button
-                                type="button"
-                                class="rounded-2xl border border-white/20 px-4 py-2 text-sm text-white/80 transition hover:border-white/40"
-                                @click="closeSettings"
-                            >
-                                取消
-                            </button>
-                            <button
-                                type="submit"
-                                class="rounded-2xl bg-white/90 px-6 py-2 text-sm font-semibold text-black transition hover:bg-white disabled:cursor-not-allowed disabled:bg-white/30"
-                                :disabled="!settingsForm.apiKey.trim()"
-                            >
-                                保存
-                            </button>
+
+        <!-- iOS Glass 风格对话框 -->
+        <div class="fixed bottom-0 left-0 right-0 z-30 flex flex-col items-center pb-8 px-4 pointer-events-none">
+            
+            <!-- 历史记录浮层 -->
+            <Transition name="fade-scale">
+                <div v-if="isChatOpen" class="pointer-events-auto absolute bottom-full mb-6 w-full max-w-3xl rounded-[32px] border border-white/10 bg-black/60 p-6 backdrop-blur-3xl shadow-2xl max-h-[60vh] overflow-y-auto">
+                    <div class="flex justify-between items-center mb-6 px-2">
+                        <h3 class="text-lg font-semibold text-white">History</h3>
+                        <button @click="isChatOpen = false" class="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/60 transition hover:bg-white/20 hover:text-white">
+                            <span class="text-lg leading-none">×</span>
+                        </button>
+                    </div>
+                    <div class="space-y-6 px-2">
+                        <div v-for="msg in messages" :key="msg.id" class="flex flex-col gap-2">
+                            <span class="text-xs font-medium text-white/40 uppercase tracking-wide">
+                                {{ msg.sender === 'self' ? 'You' : 'Cyrene' }}
+                            </span>
+                            <p class="text-[15px] leading-relaxed text-white/90 font-light">{{ msg.text }}</p>
                         </div>
                     </div>
-                </form>
+                </div>
+            </Transition>
+
+            <!-- 主对话框容器 -->
+            <div class="pointer-events-auto w-full max-w-4xl relative">
+                
+                <!-- 对话内容卡片 -->
+                <div class="relative overflow-hidden rounded-[32px] border border-white/10 bg-black/40 p-8 shadow-2xl backdrop-blur-2xl transition-all duration-500">
+                    <!-- 名字 -->
+                    <div class="mb-3 flex items-center gap-3">
+                        <div class="h-2 w-2 rounded-full bg-pink-400 shadow-[0_0_8px_rgba(244,114,182,0.6)]"></div>
+                        <span class="text-sm font-semibold text-white/60 tracking-wide">昔涟</span>
+                    </div>
+
+                    <!-- 文本内容 -->
+                    <div class="min-h-[60px] pr-12">
+                        <p class="text-lg leading-relaxed text-white font-light tracking-wide">
+                            <span v-if="isResponding" class="animate-pulse text-white/50">Thinking...</span>
+                            <span v-else>{{ messages.length > 0 ? messages[messages.length - 1].text : '...' }}</span>
+                        </p>
+                    </div>
+
+                    <!-- Log 按钮 -->
+                    <button 
+                        @click="isChatOpen = !isChatOpen"
+                        class="absolute top-8 right-8 flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-white/40 transition hover:bg-white/10 hover:text-white active:scale-95"
+                    >
+                        <IconChatProcessingOutline class="h-4 w-4" />
+                    </button>
+                </div>
+
+                <!-- 输入框区域 -->
+                <div class="mt-4 px-2">
+                    <form @submit.prevent="handleSend" class="relative flex items-center gap-2">
+                        <button
+                            type="button"
+                            :disabled="!voiceSupported"
+                            @click="toggleVoiceInput"
+                            class="flex h-[54px] w-[54px] items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 shadow-md backdrop-blur-xl transition hover:bg-white/10 hover:text-white active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
+                            :class="{ 'bg-pink-500 text-black hover:bg-pink-500 shadow-pink-500/40': isListening }"
+                            aria-label="Voice input"
+                        >
+                            <IconMicrophone class="h-5 w-5" />
+                        </button>
+                        <div class="relative flex-1 overflow-hidden rounded-full border border-white/10 bg-white/5 backdrop-blur-xl transition-all focus-within:bg-white/10 focus-within:border-white/20 focus-within:shadow-[0_0_20px_rgba(255,255,255,0.05)]">
+                            <input
+                                v-model="pendingMessage"
+                                type="text"
+                                placeholder="Type a message..."
+                                class="w-full bg-transparent px-6 py-4 text-[15px] text-white placeholder:text-white/30 focus:outline-none"
+                                @keydown="handleKeydown"
+                                :disabled="isResponding"
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            :disabled="!pendingMessage.trim() || isResponding"
+                            class="flex h-[54px] w-[54px] items-center justify-center rounded-full bg-white text-black shadow-lg transition hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100"
+                        >
+                            <IconSend class="h-5 w-5 ml-0.5" />
+                        </button>
+                    </form>
+                    <div class="mt-2 min-h-[20px] px-3 text-sm text-red-200" v-if="voiceError">
+                        {{ voiceError }}
+                    </div>
+                </div>
             </div>
         </div>
+
+        <!-- 设置弹窗 -->
+        <Transition name="fade-scale">
+            <div v-if="isSettingsOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                <div class="relative w-[420px] max-w-[90vw] overflow-hidden rounded-[32px] border border-white/10 bg-[#1c1c1e]/90 p-8 shadow-2xl backdrop-blur-xl">
+                    <header class="mb-8 flex items-center justify-between">
+                        <h2 class="text-xl font-semibold text-white">Settings</h2>
+                        <button @click="closeSettings" class="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/60 transition hover:bg-white/20 hover:text-white">
+                            <span class="text-lg leading-none">×</span>
+                        </button>
+                    </header>
+
+                    <form class="space-y-6" @submit.prevent="handleSettingsSubmit">
+                        <div class="space-y-2">
+                            <label class="ml-1 text-xs font-medium text-white/40 uppercase tracking-wider">API Key</label>
+                            <input
+                                v-model="settingsForm.apiKey"
+                                type="password"
+                                required
+                                class="w-full rounded-2xl border border-white/5 bg-black/20 px-4 py-3.5 text-[15px] text-white transition focus:bg-black/40 focus:outline-none focus:ring-1 focus:ring-white/20"
+                                placeholder="sk-..."
+                            />
+                        </div>
+
+                        <div class="space-y-2">
+                            <label class="ml-1 text-xs font-medium text-white/40 uppercase tracking-wider">Model</label>
+                            <input
+                                v-model="settingsForm.model"
+                                type="text"
+                                class="w-full rounded-2xl border border-white/5 bg-black/20 px-4 py-3.5 text-[15px] text-white transition focus:bg-black/40 focus:outline-none focus:ring-1 focus:ring-white/20"
+                                placeholder="google/gemini-2.5-flash"
+                            />
+                        </div>
+
+                        <div class="flex items-center justify-between rounded-2xl border border-white/5 bg-black/20 px-4 py-3">
+                            <div class="space-y-1">
+                                <p class="text-[15px] font-medium text-white">语音结束后自动发送</p>
+                                <p class="text-xs text-white/50">当语音识别结束时自动提交消息</p>
+                            </div>
+                            <label class="relative inline-flex h-7 w-12 cursor-pointer items-center">
+                                <input
+                                    v-model="settingsForm.autoSubmitVoice"
+                                    type="checkbox"
+                                    class="peer sr-only"
+                                />
+                                <span
+                                    class="absolute left-0 top-0 h-full w-full rounded-full bg-white/10 transition peer-checked:bg-pink-500"
+                                ></span>
+                                <span
+                                    class="absolute left-[4px] top-[3px] h-[20px] w-[20px] rounded-full bg-white transition peer-checked:translate-x-[20px]"
+                                ></span>
+                            </label>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-4">
+                            <span v-if="settingsSaved" class="text-sm text-green-400 font-medium">Saved</span>
+                            <span v-else></span>
+                            
+                            <button
+                                type="submit"
+                                class="rounded-full bg-white px-8 py-3 text-sm font-semibold text-black shadow-lg transition hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100"
+                                :disabled="!settingsForm.apiKey.trim()"
+                            >
+                                Save Changes
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </Transition>
+
+        <!-- 错误提示 -->
+        <Transition name="slide-up">
+            <div v-if="chatError" class="fixed bottom-32 left-1/2 z-50 -translate-x-1/2 transform">
+                <div class="rounded-full border border-red-500/20 bg-red-500/10 px-6 py-3 text-sm font-medium text-red-200 backdrop-blur-md shadow-lg">
+                    {{ chatError }}
+                </div>
+            </div>
+        </Transition>
     </div>
 </template>
+
+<style scoped>
+.fade-scale-enter-active,
+.fade-scale-leave-active {
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.fade-scale-enter-from,
+.fade-scale-leave-to {
+    opacity: 0;
+    transform: scale(0.95);
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.slide-up-enter-from,
+.slide-up-leave-to {
+    opacity: 0;
+    transform: translate(-50%, 40px);
+}
+</style>
