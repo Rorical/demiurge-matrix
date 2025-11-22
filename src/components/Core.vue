@@ -5,6 +5,7 @@ import IconCog from '~icons/mdi/cog'
 import { Agent } from '@/lib/agent'
 import { loadStoredOpenRouterConfig, saveStoredOpenRouterConfig } from '@/lib/openrouter-config'
 import Avatar from '@/avatar/components/Avatar.vue'
+import { generateChatSuggestions } from '@/lib/chatSuggestions'
 
 // 定义 emits
 const emit = defineEmits<{
@@ -31,6 +32,14 @@ const settingsForm = reactive({
     model: 'x-ai/grok-4.1-fast',
 })
 const messages = ref<ChatMessage[]>([])
+const initialGreeting: ChatMessage = {
+    id: -1,
+    sender: 'ally',
+    text: '你来啦，伙伴～',
+}
+const suggestions = ref<string[]>([])
+const customInput = ref('')
+const isGeneratingSuggestions = ref(false)
 
 const scrollMessagesToBottom = () => {
     nextTick(() => {
@@ -101,11 +110,16 @@ const ensureAgent = (): Agent => {
         openSettings()
         throw new Error('Missing OpenRouter API key.')
     }
+    suggestions.value = []
     if (!agentInstance) {
         agentInstance = new Agent({
             systemPrompt: PROMPT,
             model: stored.model,
         })
+        agentInstance.addMemory({ role: 'assistant', content: initialGreeting.text, timestamp: Date.now() })
+        if (!messages.value.length) {
+            messages.value.push(initialGreeting)
+        }
     }
     return agentInstance
 }
@@ -147,12 +161,87 @@ const handleAvatarReady = () => {
     emit('ready')
 }
 
+const updateSuggestions = async () => {
+    isGeneratingSuggestions.value = true
+    try {
+        const stored = loadStoredOpenRouterConfig()
+        if (!stored?.apiKey) {
+            suggestions.value = []
+            return
+        }
+
+        const agent = ensureAgent()
+
+        const historyForSuggestion = messages.value.map(msg => ({
+            role: msg.sender === 'self' ? 'user' : 'assistant',
+            content: msg.text,
+        }))
+
+        const nextSuggestions = await generateChatSuggestions(historyForSuggestion, {
+            client: agent.getClient(),
+        })
+
+        suggestions.value = nextSuggestions
+    } catch (error) {
+        suggestions.value = []
+    } finally {
+        isGeneratingSuggestions.value = false
+    }
+}
+
+const sendMessage = async (text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed || isResponding.value) {
+        return
+    }
+
+    let agent: Agent
+    try {
+        agent = ensureAgent()
+    } catch {
+        return
+    }
+
+    chatError.value = ''
+    messages.value.push({
+        id: Date.now(),
+        sender: 'self',
+        text: trimmed,
+    })
+    scrollMessagesToBottom()
+    isResponding.value = true
+
+    try {
+        await agent.run(trimmed)
+        messages.value = buildMessagesFromAgent(agent)
+        scrollMessagesToBottom()
+    } catch (error) {
+        chatError.value = error instanceof Error ? error.message : '未知错误，请稍后重试。'
+    } finally {
+        isResponding.value = false
+        void updateSuggestions()
+    }
+}
+
+const handleSuggestionClick = (text: string) => {
+    sendMessage(text)
+}
+
+const submitCustomInput = () => {
+    const text = customInput.value.trim()
+    if (!text) return
+    customInput.value = ''
+    sendMessage(text)
+}
+
 onMounted(() => {
     const stored = loadStoredOpenRouterConfig()
     if (stored) {
         settingsForm.apiKey = stored.apiKey ?? ''
         settingsForm.model = stored.model ?? settingsForm.model
     }
+
+    void updateSuggestions()
 })
 
 onUnmounted(() => {
@@ -214,8 +303,7 @@ defineExpose({
             </Transition>
 
             <!-- 主对话框容器 -->
-            <div class="pointer-events-auto w-full max-w-4xl relative">
-                
+            <div class="pointer-events-auto w-full max-w-4xl relative flex flex-col gap-4">
                 <!-- 对话内容卡片 -->
                 <div class="relative overflow-hidden rounded-[32px] border border-white/10 bg-black/40 p-8 shadow-2xl backdrop-blur-2xl transition-all duration-500">
                     <!-- 名字 -->
@@ -241,6 +329,42 @@ defineExpose({
                     </button>
                 </div>
 
+            </div>
+        </div>
+
+        <!-- 右侧浮动建议与输入 -->
+        <div class="pointer-events-none fixed right-6 bottom-8 z-40 flex max-w-[320px] flex-col items-end gap-3">
+            <button
+                v-for="suggestion in suggestions"
+                :key="suggestion"
+                type="button"
+                class="pointer-events-auto w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm text-white/80 backdrop-blur-2xl shadow-xl transition hover:border-white/30 hover:bg-white/10 hover:text-white"
+                @click="handleSuggestionClick(suggestion)"
+                :disabled="isResponding"
+            >
+                {{ suggestion }}
+            </button>
+            <p v-if="!suggestions.length" class="pointer-events-none w-full text-right text-sm text-white/50">{{ isGeneratingSuggestions ? '生成中...' : '暂无建议' }}</p>
+
+            <div class="pointer-events-auto w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur-2xl shadow-xl">
+                <div class="flex items-center gap-2">
+                    <input
+                        v-model="customInput"
+                        type="text"
+                        class="flex-1 bg-transparent text-sm text-white placeholder:text-white/30 focus:outline-none"
+                        placeholder="输入你想说的话..."
+                        @keydown.enter.prevent="submitCustomInput"
+                        :disabled="isResponding"
+                    />
+                    <button
+                        type="button"
+                        class="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-black shadow-md transition hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:hover:scale-100"
+                        @click="submitCustomInput"
+                        :disabled="isResponding || !customInput.trim()"
+                    >
+                        发送
+                    </button>
+                </div>
             </div>
         </div>
 

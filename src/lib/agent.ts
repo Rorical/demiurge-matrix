@@ -98,6 +98,10 @@ export class Agent {
         return this.memory
     }
 
+    getClient(): OpenRouterClient {
+        return this.client
+    }
+
     addMemory(entry: Omit<MemoryEntry, 'timestamp'> & Partial<Pick<MemoryEntry, 'timestamp'>>) {
         const timestamp = entry.timestamp ?? Date.now()
         const { timestamp: _ignored, ...rest } = entry
