@@ -27,9 +27,14 @@ const settingsSaved = ref(false)
 const isResponding = ref(false)
 const chatError = ref('')
 let agentInstance: Agent | null = null
+const DEFAULT_OPENROUTER_CONFIG = {
+    apiKey: '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',
+    model: 'x-ai/grok-4.1-fast:free',
+}
+
 const settingsForm = reactive({
-    apiKey: '',
-    model: 'x-ai/grok-4.1-fast',
+    apiKey: DEFAULT_OPENROUTER_CONFIG.apiKey,
+    model: DEFAULT_OPENROUTER_CONFIG.model,
 })
 const messages = ref<ChatMessage[]>([])
 const initialGreeting: ChatMessage = {
@@ -104,7 +109,7 @@ Remember [YOU are the character]: Not you are cosplaying it, YOU ARE 昔涟.
 `
 
 const ensureAgent = (): Agent => {
-    const stored = loadStoredOpenRouterConfig()
+    const stored = loadStoredOpenRouterConfig() ?? DEFAULT_OPENROUTER_CONFIG
     if (!stored?.apiKey) {
         chatError.value = '请先在设置里配置 OpenRouter API Key。'
         openSettings()
@@ -114,7 +119,7 @@ const ensureAgent = (): Agent => {
     if (!agentInstance) {
         agentInstance = new Agent({
             systemPrompt: PROMPT,
-            model: stored.model,
+            model: stored.model ?? DEFAULT_OPENROUTER_CONFIG.model,
         })
         agentInstance.addMemory({ role: 'assistant', content: initialGreeting.text, timestamp: Date.now() })
         if (!messages.value.length) {
@@ -237,8 +242,11 @@ const submitCustomInput = () => {
 onMounted(() => {
     const stored = loadStoredOpenRouterConfig()
     if (stored) {
-        settingsForm.apiKey = stored.apiKey ?? ''
-        settingsForm.model = stored.model ?? settingsForm.model
+        settingsForm.apiKey = stored.apiKey ?? DEFAULT_OPENROUTER_CONFIG.apiKey
+        settingsForm.model = stored.model ?? DEFAULT_OPENROUTER_CONFIG.model
+    } else {
+        settingsForm.apiKey = DEFAULT_OPENROUTER_CONFIG.apiKey
+        settingsForm.model = DEFAULT_OPENROUTER_CONFIG.model
     }
 
     void updateSuggestions()
